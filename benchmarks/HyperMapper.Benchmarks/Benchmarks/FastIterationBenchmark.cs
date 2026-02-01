@@ -108,13 +108,13 @@ public class FastIterationBenchmark
     [Benchmark(Description = "Flat_Runtime")]
     public ModelDto FlatteningRuntime()
     {
-        return _flatMapper.Map<ModelDto>(_flatteningSource);
+        return _flatMapper.Map<ModelObject, ModelDto>(_flatteningSource);
     }
 
     [Benchmark(Description = "Flat_CodeGen")]
     public ModelDto FlatteningCodeGen()
     {
-        return _flatMapperCodeGen.Map<ModelDto>(_flatteningSource);
+        return _flatMapperCodeGen.Map<ModelObject, ModelDto>(_flatteningSource);
     }
 
     // ===== DEEP NESTING BENCHMARKS (5 levels) =====
@@ -153,12 +153,12 @@ public class FastIterationBenchmark
     [Benchmark(Description = "Deep5_Runtime")]
     public DeepLevel1Destination DeepNestingRuntime()
     {
-        return _deepMapper.Map<DeepLevel1Destination>(_deepSource);
+        return _deepMapper.Map<DeepLevel1Source, DeepLevel1Destination>(_deepSource);
     }
 
     [Benchmark(Description = "Deep5_CodeGen")]
     public DeepLevel1Destination DeepNestingCodeGen()
     {
-        return _deepMapperCodeGen.Map<DeepLevel1Destination>(_deepSource);
+        return _deepMapperCodeGen.Map<DeepLevel1Source, DeepLevel1Destination>(_deepSource);
     }
 }

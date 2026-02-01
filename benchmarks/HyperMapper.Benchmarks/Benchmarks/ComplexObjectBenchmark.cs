@@ -67,7 +67,7 @@ public class ComplexObjectBenchmark
         {
             cfg.AddProfile<HyperMapperComplexProfile>();
         });
-        HyperMapper.Generated.HyperMapperGeneratedRegistry.Initialize(linksCodeGenConfig);
+        global::HyperMapper.Generated.HyperMapperGeneratedRegistry.Initialize(linksCodeGenConfig);
         _linksMapperCodeGen = linksCodeGenConfig.CreateMapper();
 
         // AutoMapper setup

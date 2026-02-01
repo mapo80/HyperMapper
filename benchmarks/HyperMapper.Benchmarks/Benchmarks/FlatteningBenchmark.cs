@@ -44,7 +44,7 @@ public class FlatteningBenchmark
         {
             cfg.AddProfile<HyperMapperFlatteningProfile>();
         });
-        HyperMapper.Generated.HyperMapperGeneratedRegistry.Initialize(linksCodeGenConfig);
+        global::HyperMapper.Generated.HyperMapperGeneratedRegistry.Initialize(linksCodeGenConfig);
         _linksMapperCodeGen = linksCodeGenConfig.CreateMapper();
 
         // AutoMapper setup
@@ -71,13 +71,13 @@ public class FlatteningBenchmark
     [Benchmark]
     public ModelDto HyperMapper()
     {
-        return _linksMapper.Map<ModelDto>(_source);
+        return _linksMapper.Map<ModelObject, ModelDto>(_source);
     }
 
     [Benchmark]
     public ModelDto HyperMapper_CodeGen()
     {
-        return _linksMapperCodeGen.Map<ModelDto>(_source);
+        return _linksMapperCodeGen.Map<ModelObject, ModelDto>(_source);
     }
 
     [Benchmark]

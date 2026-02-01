@@ -75,7 +75,7 @@ public class DeepNestingBenchmark
         {
             cfg.AddProfile<HyperMapperDeepProfile>();
         });
-        HyperMapper.Generated.HyperMapperGeneratedRegistry.Initialize(linksCodeGenConfig);
+        global::HyperMapper.Generated.HyperMapperGeneratedRegistry.Initialize(linksCodeGenConfig);
         _linksMapperCodeGen = linksCodeGenConfig.CreateMapper();
 
         // AutoMapper setup
@@ -145,13 +145,13 @@ public class DeepNestingBenchmark
     [Benchmark]
     public DeepLevel1Destination HyperMapper()
     {
-        return _linksMapper.Map<DeepLevel1Destination>(_source);
+        return _linksMapper.Map<DeepLevel1Source, DeepLevel1Destination>(_source);
     }
 
     [Benchmark]
     public DeepLevel1Destination HyperMapper_CodeGen()
     {
-        return _linksMapperCodeGen.Map<DeepLevel1Destination>(_source);
+        return _linksMapperCodeGen.Map<DeepLevel1Source, DeepLevel1Destination>(_source);
     }
 
     [Benchmark]

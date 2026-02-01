@@ -38,7 +38,7 @@ public class CollectionBenchmark
         {
             cfg.AddProfile<HyperMapperCollectionProfile>();
         });
-        HyperMapper.Generated.HyperMapperGeneratedRegistry.Initialize(linksCodeGenConfig);
+        global::HyperMapper.Generated.HyperMapperGeneratedRegistry.Initialize(linksCodeGenConfig);
         _linksMapperCodeGen = linksCodeGenConfig.CreateMapper();
 
         // AutoMapper setup
@@ -87,13 +87,13 @@ public class CollectionBenchmark
     [Benchmark]
     public List<CollectionItemDestination> HyperMapper_Small()
     {
-        return _linksMapper.Map<List<CollectionItemDestination>>(_smallList);
+        return _linksMapper.Map<List<CollectionItemSource>, List<CollectionItemDestination>>(_smallList);
     }
 
     [Benchmark]
     public List<CollectionItemDestination> HyperMapper_CodeGen_Small()
     {
-        return _linksMapperCodeGen.Map<List<CollectionItemDestination>>(_smallList);
+        return _linksMapperCodeGen.Map<List<CollectionItemSource>, List<CollectionItemDestination>>(_smallList);
     }
 
     [Benchmark]
@@ -124,13 +124,13 @@ public class CollectionBenchmark
     [Benchmark]
     public List<CollectionItemDestination> HyperMapper_Medium()
     {
-        return _linksMapper.Map<List<CollectionItemDestination>>(_mediumList);
+        return _linksMapper.Map<List<CollectionItemSource>, List<CollectionItemDestination>>(_mediumList);
     }
 
     [Benchmark]
     public List<CollectionItemDestination> HyperMapper_CodeGen_Medium()
     {
-        return _linksMapperCodeGen.Map<List<CollectionItemDestination>>(_mediumList);
+        return _linksMapperCodeGen.Map<List<CollectionItemSource>, List<CollectionItemDestination>>(_mediumList);
     }
 
     [Benchmark]
@@ -161,13 +161,13 @@ public class CollectionBenchmark
     [Benchmark]
     public List<CollectionItemDestination> HyperMapper_Large()
     {
-        return _linksMapper.Map<List<CollectionItemDestination>>(_largeList);
+        return _linksMapper.Map<List<CollectionItemSource>, List<CollectionItemDestination>>(_largeList);
     }
 
     [Benchmark]
     public List<CollectionItemDestination> HyperMapper_CodeGen_Large()
     {
-        return _linksMapperCodeGen.Map<List<CollectionItemDestination>>(_largeList);
+        return _linksMapperCodeGen.Map<List<CollectionItemSource>, List<CollectionItemDestination>>(_largeList);
     }
 
     [Benchmark]
