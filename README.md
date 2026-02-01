@@ -4,6 +4,93 @@
 
 HyperMapper is a high-performance object mapping library designed to be fully compatible with AutoMapper's API while providing significantly better performance through Source Generators. It was created specifically to be a drop-in replacement for AutoMapper, requiring only a namespace change to migrate.
 
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         HyperMapper v11 Architecture                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   ┌──────────────────────┐
+   │   Your Application   │
+   │   using HyperMapper; │
+   └──────────┬───────────┘
+              │
+              ├─────────────────────┬─────────────────────┐
+              │                     │                     │
+              ▼                     ▼                     ▼
+   ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+   │   IMapper API    │  │  MapperConfig    │  │   Profile API    │
+   │                  │  │                  │  │                  │
+   │ • Map<T>()       │  │ • AddProfile<>() │  │ • CreateMap<>()  │
+   │ • Map<S,D>()     │  │ • AddMaps()      │  │ • ForMember()    │
+   │ • Map(s, d)      │  │ • Validate()     │  │ • ReverseMap()   │
+   └────────┬─────────┘  └────────┬─────────┘  └────────┬─────────┘
+            │                     │                     │
+            └─────────────────────┴─────────────────────┘
+                                  │
+                    ┌─────────────▼─────────────┐
+                    │   Dual Execution Engine   │
+                    └─────────────┬─────────────┘
+                                  │
+            ┌─────────────────────┴─────────────────────┐
+            │                                           │
+            ▼                                           ▼
+┌───────────────────────┐                  ┌───────────────────────┐
+│   RUNTIME MODE        │                  │   CODEGEN MODE        │
+│   (Dynamic)           │                  │   (Static)            │
+├───────────────────────┤                  ├───────────────────────┤
+│                       │                  │                       │
+│ Configuration Phase:  │                  │ Compile-Time Phase:   │
+│ • Profile Analysis    │                  │ • Roslyn Analyzer     │
+│ • TypeMap Building    │                  │ • Syntax Analysis     │
+│                       │                  │ • Code Generation     │
+│ Compilation Phase:    │                  │                       │
+│ • Expression Trees    │                  │ Generated Output:     │
+│ • IL Compilation      │                  │ • .g.cs files         │
+│ • Generic Cache       │                  │ • Static methods      │
+│                       │                  │ • Registry class      │
+│ Runtime Execution:    │                  │                       │
+│ • Delegate invoke     │                  │ Runtime Execution:    │
+│ • ~120ns per map      │                  │ • Direct method call  │
+│ • 1-5ms warm-up       │                  │ • ~44ns per map       │
+│                       │                  │ • Zero warm-up        │
+└───────────────────────┘                  └───────────────────────┘
+            │                                           │
+            │                                           │
+            └────────────────┬──────────────────────────┘
+                             │
+                             ▼
+                  ┌──────────────────────┐
+                  │   Mapped Objects     │
+                  │   (Your DTOs/Models) │
+                  └──────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          Performance Comparison                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Manual Code:      ██ 21ns                                                  │
+│  HyperMapper CG:   ████ 44ns      ← 2.1x slower than manual                │
+│  HyperMapper RT:   ████████████ 121ns  ← 5.8x slower than manual           │
+│  AutoMapper:       ████████████████ 155ns  ← 7.4x slower than manual       │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           Key Differentiators                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ✅ 100% AutoMapper API Compatible  → Drop-in replacement                   │
+│  ⚡ Dual-Mode Architecture           → Runtime OR CodeGen                    │
+│  🚀 Source Generator Support         → Compile-time code generation          │
+│  🎯 Zero Reflection (CodeGen)        → AOT/Native ready                      │
+│  🔥 Zero Warm-up (CodeGen)           → Fast from first call                  │
+│  📦 .NET 8+ Compatible               → Modern .NET support                   │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
 ## Key Features
 
 - ✅ **100% AutoMapper API Compatible** - Same interfaces, same methods, same behavior
