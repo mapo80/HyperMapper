@@ -975,6 +975,94 @@ CreateMap<Source, Dest>()
 
 ---
 
+## CodeGen Mode Known Limitations
+
+While CodeGen Mode provides significant performance improvements (up to 4.6x faster than Runtime), there are some limitations due to the compile-time nature of Source Generators:
+
+### ❌ Not Supported in CodeGen Mode
+
+1. **Class-based ITypeConverter** (use lambda converters instead)
+   ```csharp
+   // ❌ NOT SUPPORTED in CodeGen
+   CreateMap<Source, Dest>()
+       .ConvertUsing(new MyCustomConverter());
+
+   // ✅ SUPPORTED - Use lambda converter
+   CreateMap<Source, Dest>()
+       .ConvertUsing(s => new Dest { Value = s.Value * 2 });
+   ```
+
+2. **Open Generic CreateMap with Type arguments**
+   ```csharp
+   // ❌ NOT SUPPORTED in CodeGen
+   CreateMap(typeof(IPagedList<>), typeof(PagedListDto<>))
+       .ConvertUsing(typeof(PagedListConverter<,>));
+
+   // ✅ WORKAROUND - Use generic constraints
+   CreateMap<IPagedList<T>, PagedListDto<T>>()
+       .ConvertUsing(s => new PagedListDto<T> { Items = s.Items });
+   ```
+
+3. **BeforeMap/AfterMap hooks** (Runtime only)
+   ```csharp
+   // ❌ NOT SUPPORTED in CodeGen
+   CreateMap<Source, Dest>()
+       .BeforeMap((s, d) => Console.WriteLine("Mapping"))
+       .AfterMap((s, d) => d.Validate());
+
+   // ✅ WORKAROUND - Use Runtime Mode for these mappings
+   ```
+
+### ⚠️ Workarounds
+
+**For ITypeConverter-based mappings**: Use Runtime Mode for those specific mappings and CodeGen for the rest:
+
+```csharp
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.AddProfile<FastMappingsProfile>();    // CodeGen-compatible
+    cfg.AddProfile<ComplexMappingsProfile>(); // Uses ITypeConverter - Runtime
+});
+
+// Initialize CodeGen for compatible profiles only
+HyperMapperGeneratedRegistry.Initialize(config);
+
+var mapper = config.CreateMapper();
+```
+
+**For Open Generics**: Create specific mappings for each type combination:
+
+```csharp
+// Instead of: CreateMap(typeof(List<>), typeof(ListDto<>))
+// Do:
+CreateMap<List<User>, ListDto<UserDto>>();
+CreateMap<List<Product>, ListDto<ProductDto>>();
+```
+
+### ✅ Fully Supported Features
+
+All other AutoMapper features work in CodeGen Mode:
+- ✅ ForMember with MapFrom (including nested properties)
+- ✅ Condition and PreCondition
+- ✅ ConstructUsing with lambda
+- ✅ ForCtorParam
+- ✅ ForPath
+- ✅ NullSubstitute
+- ✅ Include/IncludeBase (polymorphic mapping)
+- ✅ IncludeMembers (flattening from nested objects)
+- ✅ AddTransform (type-level transformations)
+- ✅ Collections (all types: Array, List, HashSet, Dictionary, etc.)
+- ✅ Flattening (AddressStreet → Address.Street)
+- ✅ ReverseMap
+- ✅ Value converters
+- ✅ Nullable type handling
+
+### 💡 Best Practice
+
+Start with CodeGen Mode for all mappings, and only fall back to Runtime Mode for the rare cases that require ITypeConverter instances or runtime hooks.
+
+---
+
 ## Advanced Features
 
 ### Type Transformations

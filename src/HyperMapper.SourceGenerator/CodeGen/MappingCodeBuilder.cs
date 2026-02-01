@@ -47,6 +47,17 @@ internal class MappingCodeBuilder
         sb.AppendLine("using System.Collections.Generic;");
         sb.AppendLine("using System.Collections.ObjectModel;");  // v7.1.0: ObservableCollection support
         sb.AppendLine("using System.Linq;");
+
+        // v11.0.1: Collect and add custom namespaces from expressions
+        var customNamespaces = CollectReferencedNamespaces(profile, compilation);
+        foreach (var ns in customNamespaces.OrderBy(n => n))
+        {
+            if (ns != profile.Namespace) // Don't import own namespace
+            {
+                sb.AppendLine($"using {ns};");
+            }
+        }
+
         sb.AppendLine();
 
         if (!string.IsNullOrEmpty(profile.Namespace))
@@ -310,7 +321,7 @@ internal class MappingCodeBuilder
                 var adjustedExpr = isSourceNullableValueType
                     ? sourceExpr.Replace("source.", $"{sourceVarName}.")
                     : sourceExpr;
-                assignment = GenerateCustomMappingAssignment(destProp, adjustedExpr);
+                assignment = GenerateCustomMappingAssignment(destProp, adjustedExpr, mapping, compilation);
             }
             else if (sourceProperties.TryGetValue(destProp.Name, out var sourceProp))
             {
@@ -663,12 +674,117 @@ internal class MappingCodeBuilder
         }
     }
 
-    private string GenerateCustomMappingAssignment(IPropertySymbol destProp, string sourceExpr)
+    private string GenerateCustomMappingAssignment(IPropertySymbol destProp, string sourceExpr, MappingDefinition mapping, Compilation compilation)
     {
         // The expression should already have "source." prefixed from the ReplaceParameterWithSource call
         // Optimize the expression before using it
         var optimizedExpr = OptimizeNavigationExpression(sourceExpr);
+
+        // v11.0.1: Type-aware conversion - analyze expression type and convert if needed
+        var exprType = AnalyzeExpressionType(optimizedExpr, mapping, compilation);
+        var destType = destProp.Type;
+
+        // Check if types match
+        if (exprType != null && !SymbolEqualityComparer.Default.Equals(exprType, destType))
+        {
+            // Types differ - need conversion
+
+            // Collection conversion
+            if (IsCollectionType(exprType) && IsCollectionType(destType))
+            {
+                var sourceElemType = GetCollectionElementType(exprType);
+                var destElemType = GetCollectionElementType(destType);
+
+                if (sourceElemType != null && destElemType != null &&
+                    !SymbolEqualityComparer.Default.Equals(sourceElemType, destElemType))
+                {
+                    // Map each element
+                    var mapperMethod = GetMapperMethodName(sourceElemType.Name, destElemType.Name);
+                    return $"{destProp.Name} = {optimizedExpr}?.Select(x => {mapperMethod}(x)!)?.ToList()";
+                }
+            }
+
+            // Complex type conversion
+            if (IsComplexType(exprType) && IsComplexType(destType))
+            {
+                var mapperMethod = GetMapperMethodName(exprType.Name, destType.Name);
+
+                // Handle nullable navigation chains
+                if (optimizedExpr.Contains("?."))
+                {
+                    // Expression is already null-safe: source.A?.B?.C
+                    return $"{destProp.Name} = {optimizedExpr} != null ? {mapperMethod}({optimizedExpr}) : null";
+                }
+                else
+                {
+                    return $"{destProp.Name} = {mapperMethod}({optimizedExpr})";
+                }
+            }
+
+            // Nullable value type handling
+            var exprUnderlying = GetUnderlyingType(exprType);
+            if (exprUnderlying != null && SymbolEqualityComparer.Default.Equals(exprUnderlying, destType) && destType.IsValueType)
+            {
+                // T? -> T for value types: use ?? default
+                return $"{destProp.Name} = {optimizedExpr} ?? default";
+            }
+        }
+
+        // Types match or can't convert - direct assignment
         return $"{destProp.Name} = {optimizedExpr}";
+    }
+
+    /// <summary>
+    /// v11.0.1: Analyzes the type of an expression string by walking the property chain.
+    /// </summary>
+    private ITypeSymbol? AnalyzeExpressionType(string expression, MappingDefinition mapping, Compilation compilation)
+    {
+        // Parse expression: "source.Property1.Property2.Property3"
+        // Handle null-safe operators: "source.Property1?.Property2?.Property3"
+        var cleanExpr = expression.Replace("?.", ".").Replace("!", "").Trim();
+
+        // Remove trailing null coalescing if present: "...  ?? default"
+        var coalesceIdx = cleanExpr.IndexOf("??");
+        if (coalesceIdx >= 0)
+        {
+            cleanExpr = cleanExpr.Substring(0, coalesceIdx).Trim();
+        }
+
+        var parts = cleanExpr.Split('.');
+
+        if (parts.Length == 0 || parts[0] != "source")
+            return null;
+
+        var currentType = mapping.SourceTypeSymbol;
+
+        // Walk the property chain
+        for (int i = 1; i < parts.Length; i++)
+        {
+            var propName = parts[i].Trim();
+            if (string.IsNullOrEmpty(propName))
+                continue;
+
+            // Remove method calls if present (e.g., "ToList()")
+            var parenIdx = propName.IndexOf('(');
+            if (parenIdx >= 0)
+            {
+                propName = propName.Substring(0, parenIdx);
+            }
+
+            if (string.IsNullOrEmpty(propName))
+                continue;
+
+            var prop = currentType?.GetMembers(propName)
+                .OfType<IPropertySymbol>()
+                .FirstOrDefault();
+
+            if (prop == null)
+                return null; // Can't determine type
+
+            currentType = prop.Type;
+        }
+
+        return currentType;
     }
 
     /// <summary>
@@ -1741,6 +1857,119 @@ internal class MappingCodeBuilder
         }
 
         return valueExpr;
+    }
+
+    /// <summary>
+    /// v11.0.1: Collects all referenced namespaces from expressions in the profile.
+    /// </summary>
+    private HashSet<string> CollectReferencedNamespaces(ProfileInfo profile, Compilation compilation)
+    {
+        var namespaces = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var mapping in profile.Mappings)
+        {
+            // Add source and dest type namespaces
+            if (mapping.SourceTypeSymbol != null)
+                AddNamespace(namespaces, mapping.SourceTypeSymbol);
+            if (mapping.DestinationTypeSymbol != null)
+                AddNamespace(namespaces, mapping.DestinationTypeSymbol);
+
+            // Analyze custom expressions in member mappings
+            foreach (var memberMapping in mapping.MemberMappings)
+            {
+                if (memberMapping.SourceExpression != null)
+                {
+                    // Parse expression and find all types
+                    var types = ExtractTypesFromExpression(memberMapping.SourceExpression, mapping);
+                    foreach (var type in types)
+                    {
+                        AddNamespace(namespaces, type);
+                    }
+                }
+            }
+
+            // Analyze converter lambda expressions
+            if (mapping.ConverterLambdaExpression != null)
+            {
+                var types = ExtractTypesFromExpression(mapping.ConverterLambdaExpression, mapping);
+                foreach (var type in types)
+                {
+                    AddNamespace(namespaces, type);
+                }
+            }
+        }
+
+        // Always include System.Linq for Select, ToList, etc.
+        namespaces.Add("System.Linq");
+
+        return namespaces;
+    }
+
+    /// <summary>
+    /// v11.0.1: Adds namespace from type symbol to the set.
+    /// </summary>
+    private void AddNamespace(HashSet<string> namespaces, ITypeSymbol type)
+    {
+        var ns = type.ContainingNamespace?.ToDisplayString();
+        if (!string.IsNullOrEmpty(ns) && ns != "System" && ns != "<global namespace>")
+        {
+            namespaces.Add(ns!); // null-forgiving: ns is checked by !string.IsNullOrEmpty above
+        }
+
+        // Handle generic type arguments
+        if (type is INamedTypeSymbol namedType && namedType.IsGenericType)
+        {
+            foreach (var typeArg in namedType.TypeArguments)
+            {
+                AddNamespace(namespaces, typeArg);
+            }
+        }
+    }
+
+    /// <summary>
+    /// v11.0.1: Extracts types from expression string.
+    /// </summary>
+    private List<ITypeSymbol> ExtractTypesFromExpression(string expression, MappingDefinition mapping)
+    {
+        var types = new List<ITypeSymbol>();
+
+        // Pattern: Type names in expressions (e.g., Array.Empty<TypeName>())
+        var typePattern = @"\b([A-Z]\w+)(?:<.*?>)?";
+        var matches = Regex.Matches(expression, typePattern);
+
+        foreach (Match match in matches)
+        {
+            var typeName = match.Groups[1].Value;
+
+            // Try to find type in source type's assembly
+            var type = FindTypeByName(typeName, mapping.SourceTypeSymbol);
+            if (type != null)
+            {
+                types.Add(type);
+            }
+        }
+
+        return types;
+    }
+
+    /// <summary>
+    /// v11.0.1: Finds type by name in the context namespace hierarchy.
+    /// </summary>
+    private ITypeSymbol? FindTypeByName(string typeName, ITypeSymbol? context)
+    {
+        if (context == null) return null;
+
+        // Search in containing namespace and parent namespaces
+        var ns = context.ContainingNamespace;
+        while (ns != null && !ns.IsGlobalNamespace)
+        {
+            var type = ns.GetTypeMembers(typeName).FirstOrDefault();
+            if (type != null)
+                return type;
+            ns = ns.ContainingNamespace;
+        }
+
+        return null;
     }
 
     #endregion
