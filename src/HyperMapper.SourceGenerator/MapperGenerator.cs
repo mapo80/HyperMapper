@@ -426,6 +426,23 @@ public class MapperGenerator : IIncrementalGenerator
                         var bodyText = converterBody.ToString();
                         mapping.ConverterLambdaExpression = ReplaceParameterWithSource(bodyText, paramName);
                     }
+                    // v12.0.0: Support class-based ITypeConverter
+                    else if (converterArg?.Expression is ObjectCreationExpressionSyntax objectCreation)
+                    {
+                        // Get full type name including namespace using semantic model
+                        var typeInfo = semanticModel.GetTypeInfo(objectCreation);
+                        if (typeInfo.Type != null)
+                        {
+                            // Use fully qualified name: "Links.SpotBooking.Services.Converters.GeometryConverter"
+                            mapping.ConverterTypeName = typeInfo.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                                .Replace("global::", ""); // Remove global:: prefix
+                        }
+                        else
+                        {
+                            // Fallback to simple name
+                            mapping.ConverterTypeName = objectCreation.Type.ToString();
+                        }
+                    }
                 }
                 else if (methodName == "ValidateMemberList")
                 {

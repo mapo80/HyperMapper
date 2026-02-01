@@ -1,4 +1,4 @@
-# HyperMapper v11
+# HyperMapper v12
 
 **100% AutoMapper API Compatible** - Drop-in replacement with Source Generator support for maximum performance.
 
@@ -8,7 +8,7 @@ HyperMapper is a high-performance object mapping library designed to be fully co
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         HyperMapper v11 Architecture                         │
+│                         HyperMapper v12 Architecture                         │
 └─────────────────────────────────────────────────────────────────────────────┘
 
    ┌──────────────────────┐
@@ -814,7 +814,7 @@ For each Profile, the Source Generator creates:
 
 namespace MyApp.Profiles;
 
-[global::System.CodeDom.Compiler.GeneratedCode("HyperMapper.SourceGenerator", "11.0.0")]
+[global::System.CodeDom.Compiler.GeneratedCode("HyperMapper.SourceGenerator", "12.0.0")]
 internal static class UserProfileGeneratedMappers
 {
     /// <summary>
@@ -861,7 +861,7 @@ internal static class UserProfileGeneratedMappers
 
 namespace HyperMapper.Generated;
 
-[global::System.CodeDom.Compiler.GeneratedCode("HyperMapper.SourceGenerator", "11.0.0")]
+[global::System.CodeDom.Compiler.GeneratedCode("HyperMapper.SourceGenerator", "12.0.0")]
 public static class HyperMapperGeneratedRegistry
 {
     private static bool _initialized;
@@ -981,18 +981,7 @@ While CodeGen Mode provides significant performance improvements (up to 4.6x fas
 
 ### ❌ Not Supported in CodeGen Mode
 
-1. **Class-based ITypeConverter** (use lambda converters instead)
-   ```csharp
-   // ❌ NOT SUPPORTED in CodeGen
-   CreateMap<Source, Dest>()
-       .ConvertUsing(new MyCustomConverter());
-
-   // ✅ SUPPORTED - Use lambda converter
-   CreateMap<Source, Dest>()
-       .ConvertUsing(s => new Dest { Value = s.Value * 2 });
-   ```
-
-2. **Open Generic CreateMap with Type arguments**
+1. **Open Generic CreateMap with Type arguments**
    ```csharp
    // ❌ NOT SUPPORTED in CodeGen
    CreateMap(typeof(IPagedList<>), typeof(PagedListDto<>))
@@ -1003,7 +992,7 @@ While CodeGen Mode provides significant performance improvements (up to 4.6x fas
        .ConvertUsing(s => new PagedListDto<T> { Items = s.Items });
    ```
 
-3. **BeforeMap/AfterMap hooks** (Runtime only)
+2. **BeforeMap/AfterMap hooks** (Runtime only)
    ```csharp
    // ❌ NOT SUPPORTED in CodeGen
    CreateMap<Source, Dest>()
@@ -1014,21 +1003,6 @@ While CodeGen Mode provides significant performance improvements (up to 4.6x fas
    ```
 
 ### ⚠️ Workarounds
-
-**For ITypeConverter-based mappings**: Use Runtime Mode for those specific mappings and CodeGen for the rest:
-
-```csharp
-var config = new MapperConfiguration(cfg =>
-{
-    cfg.AddProfile<FastMappingsProfile>();    // CodeGen-compatible
-    cfg.AddProfile<ComplexMappingsProfile>(); // Uses ITypeConverter - Runtime
-});
-
-// Initialize CodeGen for compatible profiles only
-HyperMapperGeneratedRegistry.Initialize(config);
-
-var mapper = config.CreateMapper();
-```
 
 **For Open Generics**: Create specific mappings for each type combination:
 
@@ -1042,7 +1016,19 @@ CreateMap<List<Product>, ListDto<ProductDto>>();
 ### ✅ Fully Supported Features
 
 All other AutoMapper features work in CodeGen Mode:
+- ✅ **Class-based ITypeConverter** (NEW in v12.0.0)
+  ```csharp
+  // ✅ NOW SUPPORTED in CodeGen!
+  CreateMap<Geometry, GeometryPointDto>()
+      .ConvertUsing(new GeometryConverter());
+  ```
 - ✅ ForMember with MapFrom (including nested properties)
+- ✅ **Complex LINQ expressions** in MapFrom (NEW in v12.0.0)
+  ```csharp
+  // ✅ NOW SUPPORTED - Where().Select() with type conversion
+  .ForMember(d => d.Tags, opt => opt.MapFrom(src =>
+      src.PostazioneTags.Where(pt => pt.Tag != null).Select(pt => pt.Tag!)))
+  ```
 - ✅ Condition and PreCondition
 - ✅ ConstructUsing with lambda
 - ✅ ForCtorParam
@@ -1055,7 +1041,7 @@ All other AutoMapper features work in CodeGen Mode:
 - ✅ Flattening (AddressStreet → Address.Street)
 - ✅ ReverseMap
 - ✅ Value converters
-- ✅ Nullable type handling
+- ✅ Nullable type handling (int? → int with ?? operator)
 
 ### 💡 Best Practice
 

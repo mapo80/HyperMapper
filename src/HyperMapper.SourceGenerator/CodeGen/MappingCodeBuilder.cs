@@ -105,7 +105,18 @@ internal class MappingCodeBuilder
                     GenerateCollectionMappingMethod(sb, mapping);
                     sb.AppendLine();
                 }
-                // Skip class-based converters - they need runtime
+                // v12.0.0: Support class-based ITypeConverter
+                else if (!string.IsNullOrEmpty(mapping.ConverterTypeName))
+                {
+                    // Generate method that instantiates and calls the converter
+                    GenerateClassBasedConverterMethod(sb, mapping);
+                    sb.AppendLine();
+
+                    // Generate collection mapping method
+                    GenerateCollectionMappingMethod(sb, mapping);
+                    sb.AppendLine();
+                }
+                // Skip other converters (e.g., open generic Type-based) - they need runtime
                 continue;
             }
 
@@ -674,6 +685,45 @@ internal class MappingCodeBuilder
         }
     }
 
+    /// <summary>
+    /// v12.0.0: Generates a mapping method using a class-based ITypeConverter.
+    /// </summary>
+    private void GenerateClassBasedConverterMethod(StringBuilder sb, MappingDefinition mapping)
+    {
+        var sourceType = mapping.SourceType;
+        var destType = mapping.DestinationType;
+        var methodName = GetMapperMethodName(mapping.SourceTypeName, mapping.DestinationTypeName);
+        var converterType = mapping.ConverterTypeName!;
+
+        var isSourceValueType = mapping.SourceTypeSymbol?.IsValueType == true;
+        var isSourceNullableValueType = IsNullableValueType(mapping.SourceTypeSymbol);
+
+        sb.AppendLine($"    /// <summary>");
+        sb.AppendLine($"    /// Maps {sourceType} to {destType} using {converterType}");
+        sb.AppendLine($"    /// </summary>");
+
+        if (isSourceValueType && !isSourceNullableValueType)
+        {
+            // Non-nullable value type source
+            sb.AppendLine($"    public static {destType}? {methodName}({sourceType} source)");
+            sb.AppendLine("    {");
+            sb.AppendLine($"        var converter = new {converterType}();");
+            sb.AppendLine($"        return converter.Convert(source, default!, null!);");
+            sb.AppendLine("    }");
+        }
+        else
+        {
+            // Reference type or nullable value type
+            sb.AppendLine($"    [return: global::System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(source))]");
+            sb.AppendLine($"    public static {destType}? {methodName}({sourceType}? source)");
+            sb.AppendLine("    {");
+            sb.AppendLine("        if (source is null) return null;");
+            sb.AppendLine($"        var converter = new {converterType}();");
+            sb.AppendLine($"        return converter.Convert(source, default!, null!);");
+            sb.AppendLine("    }");
+        }
+    }
+
     private string GenerateCustomMappingAssignment(IPropertySymbol destProp, string sourceExpr, MappingDefinition mapping, Compilation compilation)
     {
         // The expression should already have "source." prefixed from the ReplaceParameterWithSource call
@@ -704,6 +754,19 @@ internal class MappingCodeBuilder
                 }
             }
 
+            // v12.0.0: Handle expressions ending with .Select() that need element conversion
+            // The expression already produces IEnumerable<T>, but T needs to be mapped to TDto
+            if (IsCollectionType(destType) && IsComplexType(exprType))
+            {
+                var destElemType = GetCollectionElementType(destType);
+                if (destElemType != null && !SymbolEqualityComparer.Default.Equals(exprType, destElemType))
+                {
+                    // The expression produces IEnumerable<exprType>, need to map to IEnumerable<destElemType>
+                    var mapperMethod = GetMapperMethodName(exprType.Name, destElemType.Name);
+                    return $"{destProp.Name} = ({optimizedExpr})?.Select(x => {mapperMethod}(x)!)?.ToList()";
+                }
+            }
+
             // Complex type conversion
             if (IsComplexType(exprType) && IsComplexType(destType))
             {
@@ -725,8 +788,58 @@ internal class MappingCodeBuilder
             var exprUnderlying = GetUnderlyingType(exprType);
             if (exprUnderlying != null && SymbolEqualityComparer.Default.Equals(exprUnderlying, destType) && destType.IsValueType)
             {
+                // v12.0.0: Check if expression already has null-coalescing operator
+                // If so, the result is already non-nullable and we don't need to add ?? default
+                if (optimizedExpr.Contains("??"))
+                {
+                    // Expression like "source.X ?? 0" already produces non-nullable int
+                    return $"{destProp.Name} = {optimizedExpr}";
+                }
                 // T? -> T for value types: use ?? default
                 return $"{destProp.Name} = {optimizedExpr} ?? default";
+            }
+        }
+
+        // v12.0.0: Fallback for complex LINQ expressions that need element mapping
+        // When expression contains .Select() and destination is collection, we need to wrap with mapping
+        if (IsCollectionType(destType) && optimizedExpr.Contains(".Select("))
+        {
+            var destElemType = GetCollectionElementType(destType);
+            if (destElemType != null && IsComplexType(destElemType))
+            {
+                // Try to find the source element type from the Select expression
+                // Pattern: .Select(x => x.Property) -> Property's type
+                var selectMatch = Regex.Match(optimizedExpr, @"\.Select\s*\(\s*(\w+)\s*=>\s*\1\.(\w+)!?\s*\)");
+                if (selectMatch.Success)
+                {
+                    var propName = selectMatch.Groups[2].Value;
+                    // Find the collection property in source to get element type
+                    var baseCollMatch = Regex.Match(optimizedExpr, @"source\.(\w+)");
+                    if (baseCollMatch.Success)
+                    {
+                        var collPropName = baseCollMatch.Groups[1].Value;
+                        var collProp = mapping.SourceTypeSymbol?.GetMembers(collPropName)
+                            .OfType<IPropertySymbol>()
+                            .FirstOrDefault();
+
+                        if (collProp != null)
+                        {
+                            var collElemType = GetCollectionElementType(collProp.Type);
+                            if (collElemType != null)
+                            {
+                                var navProp = collElemType.GetMembers(propName)
+                                    .OfType<IPropertySymbol>()
+                                    .FirstOrDefault();
+
+                                if (navProp != null && !SymbolEqualityComparer.Default.Equals(navProp.Type, destElemType))
+                                {
+                                    var mapperMethod = GetMapperMethodName(navProp.Type.Name, destElemType.Name);
+                                    return $"{destProp.Name} = ({optimizedExpr})?.Select(x => {mapperMethod}(x)!)?.ToList()";
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -736,6 +849,7 @@ internal class MappingCodeBuilder
 
     /// <summary>
     /// v11.0.1: Analyzes the type of an expression string by walking the property chain.
+    /// v12.0.0: Enhanced to handle complex LINQ expressions.
     /// </summary>
     private ITypeSymbol? AnalyzeExpressionType(string expression, MappingDefinition mapping, Compilation compilation)
     {
@@ -748,6 +862,43 @@ internal class MappingCodeBuilder
         if (coalesceIdx >= 0)
         {
             cleanExpr = cleanExpr.Substring(0, coalesceIdx).Trim();
+        }
+
+        // v12.0.0: Handle complex expressions with parentheses and LINQ
+        // For expressions like "(source.Prop ?? default).Where(...).Select(x => x.Nav!)"
+        // Extract the inner lambda result type from Select()
+        var selectMatch = Regex.Match(cleanExpr, @"\.Select\s*\(\s*\w+\s*=>\s*\w+\.(\w+)!?\s*\)\s*$");
+        if (selectMatch.Success)
+        {
+            var navProperty = selectMatch.Groups[1].Value;
+            // Find the source collection element type to get the navigation property type
+            // First, find the base collection (before Where/Select)
+            var baseExprMatch = Regex.Match(cleanExpr, @"\(source\.(\w+)");
+            if (baseExprMatch.Success)
+            {
+                var collectionProp = baseExprMatch.Groups[1].Value;
+                var prop = mapping.SourceTypeSymbol?.GetMembers(collectionProp)
+                    .OfType<IPropertySymbol>()
+                    .FirstOrDefault();
+
+                if (prop != null && IsCollectionType(prop.Type))
+                {
+                    var elemType = GetCollectionElementType(prop.Type);
+                    if (elemType != null)
+                    {
+                        // Get the navigation property type
+                        var navProp = elemType.GetMembers(navProperty)
+                            .OfType<IPropertySymbol>()
+                            .FirstOrDefault();
+
+                        if (navProp != null)
+                        {
+                            // Return IEnumerable<NavPropertyType>
+                            return navProp.Type;
+                        }
+                    }
+                }
+            }
         }
 
         var parts = cleanExpr.Split('.');
@@ -1893,6 +2044,16 @@ internal class MappingCodeBuilder
             {
                 var types = ExtractTypesFromExpression(mapping.ConverterLambdaExpression, mapping);
                 foreach (var type in types)
+                {
+                    AddNamespace(namespaces, type);
+                }
+            }
+
+            // v12.0.0: Add namespace for class-based converters
+            if (!string.IsNullOrEmpty(mapping.ConverterTypeName))
+            {
+                var converterTypes = ExtractTypesFromExpression(mapping.ConverterTypeName, mapping);
+                foreach (var type in converterTypes)
                 {
                     AddNamespace(namespaces, type);
                 }
