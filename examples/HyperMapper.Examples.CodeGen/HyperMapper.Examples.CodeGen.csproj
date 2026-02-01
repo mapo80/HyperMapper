@@ -12,9 +12,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../src/HyperMapper/HyperMapper.csproj"
+    <!-- Reference HyperMapper for runtime (types and IMapper) -->
+    <ProjectReference Include="../../src/HyperMapper/HyperMapper.csproj" />
+  </ItemGroup>
+
+  <!-- Source Generator for compile-time mapping code generation -->
+  <ItemGroup>
+    <ProjectReference Include="../../src/HyperMapper.SourceGenerator/HyperMapper.SourceGenerator.csproj"
                       OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="true" />
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

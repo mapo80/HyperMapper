@@ -148,7 +148,7 @@ HyperMapper is a high-performance object mapping library designed to be fully co
 
 ## Installation
 
-### Project Reference
+### Runtime Mode Setup
 
 Add the project reference to your `.csproj`:
 
@@ -158,7 +158,51 @@ Add the project reference to your `.csproj`:
 </ItemGroup>
 ```
 
-The Source Generator is automatically included as an analyzer - no additional setup required.
+This is all you need for Runtime Mode (AutoMapper-compatible API).
+
+### CodeGen Mode Setup (Recommended for Production)
+
+To enable compile-time code generation with Source Generators:
+
+**1. Add HyperMapper reference** (runtime library):
+```xml
+<ItemGroup>
+  <ProjectReference Include="../HyperMapper/src/HyperMapper/HyperMapper.csproj" />
+</ItemGroup>
+```
+
+**2. Add Source Generator** (analyzer reference):
+```xml
+<ItemGroup>
+  <ProjectReference Include="../HyperMapper.SourceGenerator/HyperMapper.SourceGenerator.csproj"
+                    OutputItemType="Analyzer"
+                    ReferenceOutputAssembly="false" />
+</ItemGroup>
+```
+
+**3. Optional: Enable generated file inspection** (for debugging):
+```xml
+<PropertyGroup>
+  <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+  <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)\Generated</CompilerGeneratedFilesOutputPath>
+</PropertyGroup>
+```
+
+**4. Build your project** - `.g.cs` files will be generated automatically in `obj/Generated/`
+
+**5. Use generated mappers** (after first build):
+```csharp
+using HyperMapper.Generated;
+
+var config = new MapperConfiguration(cfg => {
+    cfg.AddProfile<YourProfile>();
+});
+
+HyperMapperGeneratedRegistry.Initialize(config);  // ← Register generated mappers
+var mapper = config.CreateMapper();
+```
+
+See [`examples/HyperMapper.Examples.CodeGen`](examples/HyperMapper.Examples.CodeGen) for a complete working example.
 
 ### Dependency Injection Registration
 

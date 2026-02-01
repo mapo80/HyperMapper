@@ -2,7 +2,7 @@ using System.Diagnostics;
 using HyperMapper;
 using HyperMapper.Examples.CodeGen.Models;
 using HyperMapper.Examples.CodeGen.Profiles;
-// using HyperMapper.Generated;  // Uncomment after first build
+using HyperMapper.Generated;
 
 namespace HyperMapper.Examples.CodeGen;
 
@@ -32,7 +32,7 @@ class Program
 
         // CRITICAL: Register generated mappers for maximum performance
         // This tells HyperMapper to use the compile-time generated code
-        // HyperMapperGeneratedRegistry.Initialize(config);  // Uncomment after first build
+        HyperMapperGeneratedRegistry.Initialize(config);
 
         config.AssertConfigurationIsValid();
         var mapper = config.CreateMapper();
