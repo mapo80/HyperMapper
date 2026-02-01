@@ -31,6 +31,7 @@ public class DeepLevel4Source
 public class DeepLevel5Source
 {
     public string Value { get; set; } = string.Empty;
+    public string FinalValue { get; set; } = string.Empty;
     public DeepLevel6Source? Level6 { get; set; }
 }
 
@@ -93,6 +94,7 @@ public class DeepLevel4Destination
 public class DeepLevel5Destination
 {
     public string Value { get; set; } = string.Empty;
+    public string FinalValue { get; set; } = string.Empty;
     public DeepLevel6Destination? Level6 { get; set; }
 }
 

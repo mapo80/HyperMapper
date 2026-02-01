@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using HyperMapper.SourceGenerator.Diagnostics;
 using HyperMapper.SourceGenerator.Models;
@@ -665,8 +666,39 @@ internal class MappingCodeBuilder
     private string GenerateCustomMappingAssignment(IPropertySymbol destProp, string sourceExpr)
     {
         // The expression should already have "source." prefixed from the ReplaceParameterWithSource call
-        // Just use it directly
-        return $"{destProp.Name} = {sourceExpr}";
+        // Optimize the expression before using it
+        var optimizedExpr = OptimizeNavigationExpression(sourceExpr);
+        return $"{destProp.Name} = {optimizedExpr}";
+    }
+
+    /// <summary>
+    /// Optimizes navigation expressions to reduce duplicate property access.
+    /// Transforms: source.A.B != null ? source.A.B.C : default
+    /// Into: source.A.B?.C ?? default
+    /// </summary>
+    private string OptimizeNavigationExpression(string expression)
+    {
+        // Pattern: captures "source.X.Y != null ? source.X.Y.Z : <default>"
+        // where X.Y is accessed twice (null check + property access)
+        // Regex groups:
+        // 1: navigation path (e.g., "source.Sub.SubSub")
+        // 2: property name after the duplicate navigation (e.g., "IAmACoolProperty")
+        // 3: default value (e.g., "string.Empty" or "default" or "null")
+        var ternaryPattern = @"(\w+(?:\.\w+)+)\s*!=\s*null\s*\?\s*\1\.(\w+)\s*:\s*(.+)";
+        var match = Regex.Match(expression, ternaryPattern);
+
+        if (match.Success)
+        {
+            var navigationPath = match.Groups[1].Value; // e.g., "source.Sub.SubSub"
+            var propertyName = match.Groups[2].Value;    // e.g., "IAmACoolProperty"
+            var defaultValue = match.Groups[3].Value.Trim(); // e.g., "string.Empty"
+
+            // Transform to: source.Sub.SubSub?.IAmACoolProperty ?? string.Empty
+            return $"{navigationPath}?.{propertyName} ?? {defaultValue}";
+        }
+
+        // If pattern doesn't match, return original expression unchanged
+        return expression;
     }
 
     private string? GeneratePropertyAssignment(
