@@ -11,7 +11,17 @@
     <Authors>HyperMapper Contributors</Authors>
     <Description>High-performance object mapper with 100% AutoMapper API compatibility and Source Generator support</Description>
     <PackageTags>mapper;automapper;dto;mapping;sourcegenerator;hypermapper</PackageTags>
+    <PackageProjectUrl>https://github.com/mapo80/HyperMapper</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/mapo80/HyperMapper</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />

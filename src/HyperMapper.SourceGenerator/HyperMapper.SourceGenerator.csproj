@@ -9,13 +9,23 @@
     <IsRoslynComponent>true</IsRoslynComponent>
 
     <!-- NuGet packaging -->
-    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <PackageId>HyperMapper.CodeGen</PackageId>
     <PackageVersion>12.1.2</PackageVersion>
-    <Description>Source Generator for HyperMapper - compile-time mapping code generation</Description>
+    <Description>Source Generator for HyperMapper - compile-time mapping code generation for maximum performance</Description>
     <Authors>HyperMapper Contributors</Authors>
+    <PackageTags>mapper;automapper;sourcegenerator;codegen;roslyn;aot;hypermapper</PackageTags>
+    <PackageProjectUrl>https://github.com/mapo80/HyperMapper</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/mapo80/HyperMapper</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
