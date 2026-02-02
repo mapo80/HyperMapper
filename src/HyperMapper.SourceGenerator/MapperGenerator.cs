@@ -205,8 +205,9 @@ public class MapperGenerator : IIncrementalGenerator
 
         mapping = new MappingDefinition
         {
-            SourceType = sourceType.ToDisplayString(),
-            DestinationType = destType.ToDisplayString(),
+            // v12.0.2: Use FullyQualifiedFormat to ensure external types are correctly resolved
+            SourceType = sourceType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            DestinationType = destType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             SourceTypeName = sourceType.Name,
             DestinationTypeName = destType.Name,
             SourceTypeSymbol = sourceType,
@@ -857,11 +858,13 @@ public class MapperGenerator : IIncrementalGenerator
 
     /// <summary>
     /// Replaces lambda parameter with "source" for generated code.
+    /// v12.1.0: Also handles standalone parameter (e.g., "src" -> "source").
     /// </summary>
     private static string ReplaceParameterWithSource(string expression, string paramName)
     {
         // Replace all occurrences of the parameter followed by . or in expressions
         // Handle patterns like: s.Prop, s?.Prop, $"{s.Prop}", s.Prop + s.Other, etc.
+        // v12.1.0: Also handle standalone parameter: "src" -> "source"
 
         var result = new System.Text.StringBuilder();
         int i = 0;
@@ -873,22 +876,38 @@ public class MapperGenerator : IIncrementalGenerator
             if (i + paramLen <= expression.Length &&
                 expression.Substring(i, paramLen) == paramName)
             {
+                // Check if it's a full identifier (not part of another word)
+                bool isStartOk = i == 0 || !char.IsLetterOrDigit(expression[i - 1]);
+
                 // Check what comes after the parameter name
                 int afterParam = i + paramLen;
-                if (afterParam < expression.Length)
+                bool isEndOk = afterParam >= expression.Length || !char.IsLetterOrDigit(expression[afterParam]);
+
+                if (isStartOk && isEndOk)
                 {
-                    char nextChar = expression[afterParam];
-                    // If followed by . or ?. or [ it's a member/index access
-                    if (nextChar == '.' || nextChar == '?' || nextChar == '[')
+                    // v12.1.0: Replace if:
+                    // 1. Followed by . or ?. or [ (member/index access)
+                    // 2. End of expression (standalone parameter)
+                    // 3. Followed by whitespace, comma, parenthesis, etc.
+                    if (afterParam >= expression.Length)
                     {
-                        // Check if it's a full identifier (not part of another word)
-                        bool isStartOk = i == 0 || !char.IsLetterOrDigit(expression[i - 1]);
-                        if (isStartOk)
-                        {
-                            result.Append("source");
-                            i += paramLen;
-                            continue;
-                        }
+                        // Standalone parameter at end of expression
+                        result.Append("source");
+                        i += paramLen;
+                        continue;
+                    }
+
+                    char nextChar = expression[afterParam];
+                    if (nextChar == '.' || nextChar == '?' || nextChar == '[' ||
+                        nextChar == ')' || nextChar == ',' || nextChar == ' ' ||
+                        nextChar == '+' || nextChar == '-' || nextChar == '*' ||
+                        nextChar == '/' || nextChar == '!' || nextChar == '=' ||
+                        nextChar == '<' || nextChar == '>' || nextChar == '&' ||
+                        nextChar == '|' || nextChar == ':' || nextChar == ';')
+                    {
+                        result.Append("source");
+                        i += paramLen;
+                        continue;
                     }
                 }
             }

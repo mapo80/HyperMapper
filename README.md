@@ -102,7 +102,7 @@ HyperMapper is a high-performance object mapping library designed to be fully co
 - 🛡️ **Compile-Time Safety** - Catch mapping errors before runtime
 - 🎯 **AOT/Native Ready** - Full Native AOT compilation support
 - 📦 **.NET 8+ Compatible** - Works with .NET 8, 9, 10, and future versions
-- 🧪 **Extensively Tested** - 779 tests with 82.4% code coverage
+- 🧪 **Extensively Tested** - 856 tests with 82.4% code coverage
 
 ---
 
@@ -145,6 +145,7 @@ HyperMapper is a high-performance object mapping library designed to be fully co
 - [API Reference](#api-reference)
 - [Advanced Features](#advanced-features)
   - [Value Resolvers](#value-resolvers-v1200)
+  - [Source Generator Enhancements](#source-generator-enhancements-v121x)
 - [Examples](#examples)
 - [Testing and Coverage](#testing-and-coverage)
 - [Benchmarks](#benchmarks)
@@ -1220,6 +1221,104 @@ Value resolvers are fully supported in both Runtime and CodeGen modes. In CodeGe
 
 **Note:** In CodeGen mode, the `ResolutionContext` parameter may be `null`. Resolvers that depend on `context.Mapper` for nested mappings will fall back to Runtime execution.
 
+### Source Generator Enhancements (v12.1.x)
+
+Version 12.1.x introduces several improvements to the Source Generator for better compatibility with real-world codebases.
+
+#### External Assembly Type Support (v12.0.2)
+
+Types from external assemblies (NuGet packages, referenced projects) are now fully supported in mapping expressions. The Source Generator correctly resolves fully-qualified type names:
+
+```csharp
+// Example: Using EntityFramework types
+using Microsoft.EntityFrameworkCore;
+
+public class EntitySource
+{
+    public EntityState State { get; set; }
+}
+
+public class EntityDto
+{
+    public EntityState MappedState { get; set; }
+    public string StateDescription { get; set; }
+}
+
+// Profile
+CreateMap<EntitySource, EntityDto>()
+    .ForMember(d => d.MappedState, opt => opt.MapFrom(s => s.State))
+    .ForMember(d => d.StateDescription, opt => opt.MapFrom(s => s.State.ToString()));
+```
+
+#### Ambiguous Static Class Resolution (v12.1.0)
+
+Common static classes like `Path`, `File`, `Math`, `Convert`, etc. are automatically qualified to prevent CS0104 ambiguity errors when other libraries define types with the same names:
+
+```csharp
+// These expressions work correctly even if your codebase has a "Path" class
+CreateMap<FileSource, FileDto>()
+    .ForMember(d => d.Extension, opt => opt.MapFrom(s => Path.GetExtension(s.FilePath)))
+    .ForMember(d => d.FileName, opt => opt.MapFrom(s => Path.GetFileName(s.FilePath)))
+    .ForMember(d => d.Rounded, opt => opt.MapFrom(s => Math.Round(s.Value, 2)))
+    .ForMember(d => d.IntValue, opt => opt.MapFrom(s => Convert.ToInt32(s.StringValue)));
+```
+
+**Automatically qualified classes:**
+- `Path` → `global::System.IO.Path`
+- `File` → `global::System.IO.File`
+- `Directory` → `global::System.IO.Directory`
+- `Math` → `global::System.Math`
+- `Convert` → `global::System.Convert`
+- `Encoding` → `global::System.Text.Encoding`
+- `Environment` → `global::System.Environment`
+
+#### Base Class Property Resolution (v12.1.0)
+
+Properties from base classes are now correctly resolved in MapFrom expressions:
+
+```csharp
+public class BaseEntity
+{
+    public int Id { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+public class DerivedEntity : BaseEntity
+{
+    public string Name { get; set; }
+}
+
+public class EntityDto
+{
+    public int EntityId { get; set; }
+    public string CreatedDate { get; set; }
+    public string Name { get; set; }
+}
+
+// Base class properties (Id, CreatedAt) are correctly resolved
+CreateMap<DerivedEntity, EntityDto>()
+    .ForMember(d => d.EntityId, opt => opt.MapFrom(s => s.Id))
+    .ForMember(d => d.CreatedDate, opt => opt.MapFrom(s => s.CreatedAt.ToString("yyyy-MM-dd")));
+```
+
+#### Standalone Lambda Parameter Support (v12.1.0)
+
+Lambda expressions with standalone parameters (not just property access) are now handled correctly:
+
+```csharp
+CreateMap<Source, Dest>()
+    // Ternary expressions with parameter
+    .ForMember(d => d.NameOrDefault, opt => opt.MapFrom(s =>
+        string.IsNullOrEmpty(s.Name) ? "Default" : s.Name))
+
+    // Null coalescing
+    .ForMember(d => d.Value, opt => opt.MapFrom(s => s.NullableInt ?? 0))
+
+    // Null conditional with nested object
+    .ForMember(d => d.InnerName, opt => opt.MapFrom(s =>
+        s.Inner == null ? "N/A" : s.Inner.Name));
+```
+
 ---
 
 ## Examples
@@ -1402,7 +1501,7 @@ public interface IValueResolver<in TSource, in TDestination, TDestMember>
 
 HyperMapper is extensively tested to ensure reliability and compatibility:
 
-- **779 total tests** (716 unit + 63 integration)
+- **856 total tests** (756 unit + 100 integration)
 - **100% pass rate**
 - **82.4% code coverage** (90.1% method coverage)
 

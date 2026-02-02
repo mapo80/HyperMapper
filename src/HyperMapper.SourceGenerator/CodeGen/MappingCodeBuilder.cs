@@ -34,6 +34,16 @@ internal class MappingCodeBuilder
     private const string GeneratorName = "HyperMapper.SourceGenerator";
     private const string GeneratorVersion = "7.1.0";
 
+    /// <summary>
+    /// v12.0.2: Gets fully qualified type name without global:: prefix for cleaner generated code.
+    /// This ensures external types from different assemblies are correctly resolved.
+    /// </summary>
+    private static string GetFullTypeName(ITypeSymbol type)
+    {
+        return type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+            .Replace("global::", "");
+    }
+
     public string GenerateMapperClass(ProfileInfo profile, Compilation compilation, SourceProductionContext context)
     {
         var sb = new StringBuilder();
@@ -590,7 +600,8 @@ internal class MappingCodeBuilder
                     if (propType != null && !propType.IsValueType)
                     {
                         sb.AppendLine($"        if ({nextPath} == null)");
-                        sb.AppendLine($"            {nextPath} = new {propType.ToDisplayString()}();");
+                        // v12.0.2: Use GetFullTypeName for external types
+                        sb.AppendLine($"            {nextPath} = new {GetFullTypeName(propType)}();");
                     }
                     createdIntermediates.Add(intermediateKey);
                 }
@@ -762,6 +773,9 @@ internal class MappingCodeBuilder
         // The expression should already have "source." prefixed from the ReplaceParameterWithSource call
         // Optimize the expression before using it
         var optimizedExpr = OptimizeNavigationExpression(sourceExpr);
+
+        // v12.1.0: Qualify potentially ambiguous static class names (like Path -> global::System.IO.Path)
+        optimizedExpr = QualifyAmbiguousStaticClasses(optimizedExpr, compilation);
 
         // v11.0.1: Type-aware conversion - analyze expression type and convert if needed
         var exprType = AnalyzeExpressionType(optimizedExpr, mapping, compilation);
@@ -952,15 +966,27 @@ internal class MappingCodeBuilder
             var parenIdx = propName.IndexOf('(');
             if (parenIdx >= 0)
             {
-                propName = propName.Substring(0, parenIdx);
+                var methodName = propName.Substring(0, parenIdx);
+
+                // v12.1.1: Handle LINQ extension methods that preserve/transform collection types
+                // For ToList()/ToArray()/etc., return the current type (collection) since they
+                // just convert the collection, not change element types
+                if (methodName == "ToList" || methodName == "ToArray" ||
+                    methodName == "ToDictionary" || methodName == "ToHashSet" ||
+                    methodName == "AsEnumerable" || methodName == "AsQueryable")
+                {
+                    // These methods don't change the element type, return current collection type
+                    continue;
+                }
+
+                propName = methodName;
             }
 
             if (string.IsNullOrEmpty(propName))
                 continue;
 
-            var prop = currentType?.GetMembers(propName)
-                .OfType<IPropertySymbol>()
-                .FirstOrDefault();
+            // v12.1.0: Use helper that also checks base types
+            var prop = GetPropertyByNameIncludingBase(currentType, propName);
 
             if (prop == null)
                 return null; // Can't determine type
@@ -999,6 +1025,37 @@ internal class MappingCodeBuilder
 
         // If pattern doesn't match, return original expression unchanged
         return expression;
+    }
+
+    /// <summary>
+    /// v12.1.0: Qualifies potentially ambiguous static class names with their full namespace.
+    /// This prevents CS0104 errors when a class name like "Path" exists in multiple namespaces.
+    /// </summary>
+    private string QualifyAmbiguousStaticClasses(string expression, Compilation compilation)
+    {
+        // Dictionary of known ambiguous class names and their intended System namespace
+        // These are common static classes that may conflict with other libraries
+        var ambiguousClasses = new Dictionary<string, string>
+        {
+            { "Path", "global::System.IO.Path" },
+            { "File", "global::System.IO.File" },
+            { "Directory", "global::System.IO.Directory" },
+            { "Math", "global::System.Math" },
+            { "Convert", "global::System.Convert" },
+            { "Encoding", "global::System.Text.Encoding" },
+            { "Environment", "global::System.Environment" }
+        };
+
+        var result = expression;
+        foreach (var kvp in ambiguousClasses)
+        {
+            // Pattern: standalone class name followed by a dot and method/property
+            // e.g., "Path.GetExtension" but not "source.Path" or "MyPath.Something"
+            var pattern = $@"(?<![.\w]){kvp.Key}\.";
+            result = Regex.Replace(result, pattern, $"{kvp.Value}.");
+        }
+
+        return result;
     }
 
     private string? GeneratePropertyAssignment(
@@ -1048,13 +1105,15 @@ internal class MappingCodeBuilder
         // String to enum
         if (sourceType.SpecialType == SpecialType.System_String && destType.TypeKind == TypeKind.Enum)
         {
-            return $"{destProp.Name} = Enum.Parse<{destType.ToDisplayString()}>({sourceVarName}.{sourceProp.Name})";
+            // v12.0.2: Use GetFullTypeName for external enum types
+            return $"{destProp.Name} = Enum.Parse<{GetFullTypeName(destType)}>({sourceVarName}.{sourceProp.Name})";
         }
 
         // Numeric conversions
         if (IsNumericType(sourceType) && IsNumericType(destType))
         {
-            return $"{destProp.Name} = ({destType.ToDisplayString()}){sourceVarName}.{sourceProp.Name}";
+            // v12.0.2: Use GetFullTypeName for external numeric types
+            return $"{destProp.Name} = ({GetFullTypeName(destType)}){sourceVarName}.{sourceProp.Name}";
         }
 
         // v7.1.0: Dictionary mapping (before general collection check)
@@ -1106,7 +1165,8 @@ internal class MappingCodeBuilder
         }
 
         var destKind = GetCollectionKind(destProp.Type);
-        var destElemStr = destElementType.ToDisplayString();
+        // v12.0.2: Use GetFullTypeName for external element types
+        var destElemStr = GetFullTypeName(destElementType);
         var sourceExpr = $"{sourceVarName}.{sourceProp.Name}";
 
         // Same element type
@@ -1251,8 +1311,9 @@ internal class MappingCodeBuilder
         if (destKeyType == null || destValueType == null || sourceKeyType == null || sourceValueType == null)
             return null;
 
-        var destKeyStr = destKeyType.ToDisplayString();
-        var destValueStr = destValueType.ToDisplayString();
+        // v12.0.2: Use GetFullTypeName for external key/value types
+        var destKeyStr = GetFullTypeName(destKeyType);
+        var destValueStr = GetFullTypeName(destValueType);
         var sourceExpr = $"{sourceVarName}.{sourceProp.Name}";
 
         // Same key AND value types - direct copy
@@ -1744,6 +1805,27 @@ internal class MappingCodeBuilder
             .FirstOrDefault(p => p.Name.Equals(name, StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// v12.1.0: Gets a property by name including inherited properties.
+    /// Walks the inheritance chain to find properties from base classes.
+    /// </summary>
+    private static IPropertySymbol? GetPropertyByNameIncludingBase(ITypeSymbol? typeSymbol, string name)
+    {
+        var currentType = typeSymbol;
+        while (currentType != null)
+        {
+            var prop = currentType.GetMembers(name)
+                .OfType<IPropertySymbol>()
+                .FirstOrDefault();
+
+            if (prop != null)
+                return prop;
+
+            currentType = currentType.BaseType;
+        }
+        return null;
+    }
+
     private static ITypeSymbol? GetUnderlyingType(ITypeSymbol type)
     {
         if (type is INamedTypeSymbol namedType &&
@@ -2063,8 +2145,8 @@ internal class MappingCodeBuilder
             {
                 if (memberMapping.SourceExpression != null)
                 {
-                    // Parse expression and find all types
-                    var types = ExtractTypesFromExpression(memberMapping.SourceExpression, mapping);
+                    // v12.1.0: Pass compilation to find types in referenced assemblies
+                    var types = ExtractTypesFromExpression(memberMapping.SourceExpression, mapping, compilation);
                     foreach (var type in types)
                     {
                         AddNamespace(namespaces, type);
@@ -2075,7 +2157,8 @@ internal class MappingCodeBuilder
             // Analyze converter lambda expressions
             if (mapping.ConverterLambdaExpression != null)
             {
-                var types = ExtractTypesFromExpression(mapping.ConverterLambdaExpression, mapping);
+                // v12.1.0: Pass compilation to find types in referenced assemblies
+                var types = ExtractTypesFromExpression(mapping.ConverterLambdaExpression, mapping, compilation);
                 foreach (var type in types)
                 {
                     AddNamespace(namespaces, type);
@@ -2085,7 +2168,8 @@ internal class MappingCodeBuilder
             // v12.0.0: Add namespace for class-based converters
             if (!string.IsNullOrEmpty(mapping.ConverterTypeName))
             {
-                var converterTypes = ExtractTypesFromExpression(mapping.ConverterTypeName, mapping);
+                // v12.1.0: Pass compilation to find types in referenced assemblies
+                var converterTypes = ExtractTypesFromExpression(mapping.ConverterTypeName!, mapping, compilation);
                 foreach (var type in converterTypes)
                 {
                     AddNamespace(namespaces, type);
@@ -2122,12 +2206,35 @@ internal class MappingCodeBuilder
 
     /// <summary>
     /// v11.0.1: Extracts types from expression string.
+    /// v12.1.0: Enhanced to find static method calls (e.g., DateExtension.Method()).
     /// </summary>
-    private List<ITypeSymbol> ExtractTypesFromExpression(string expression, MappingDefinition mapping)
+    private List<ITypeSymbol> ExtractTypesFromExpression(string expression, MappingDefinition mapping, Compilation? compilation = null)
     {
         var types = new List<ITypeSymbol>();
 
-        // Pattern: Type names in expressions (e.g., Array.Empty<TypeName>())
+        // v12.1.0: Pattern for static method calls: ClassName.MethodName(
+        // This captures helper classes like DateExtension, StringHelper, Base64Extensions
+        var staticMethodPattern = @"\b([A-Z][a-zA-Z0-9_]+)\s*\.\s*[A-Z][a-zA-Z0-9_]+\s*\(";
+        var staticMatches = Regex.Matches(expression, staticMethodPattern);
+
+        foreach (Match match in staticMatches)
+        {
+            var className = match.Groups[1].Value;
+
+            // Skip common built-in types that don't need namespace resolution
+            if (className == "Enum" || className == "Convert" || className == "Math" ||
+                className == "String" || className == "Array" || className == "Object")
+                continue;
+
+            // Try to find type using compilation (searches all referenced assemblies)
+            var type = FindTypeByName(className, mapping.SourceTypeSymbol, compilation);
+            if (type != null)
+            {
+                types.Add(type);
+            }
+        }
+
+        // Original pattern: Type names in expressions (e.g., Array.Empty<TypeName>())
         var typePattern = @"\b([A-Z]\w+)(?:<.*?>)?";
         var matches = Regex.Matches(expression, typePattern);
 
@@ -2136,8 +2243,8 @@ internal class MappingCodeBuilder
             var typeName = match.Groups[1].Value;
 
             // Try to find type in source type's assembly
-            var type = FindTypeByName(typeName, mapping.SourceTypeSymbol);
-            if (type != null)
+            var type = FindTypeByName(typeName, mapping.SourceTypeSymbol, compilation);
+            if (type != null && !types.Contains(type, SymbolEqualityComparer.Default))
             {
                 types.Add(type);
             }
@@ -2148,19 +2255,62 @@ internal class MappingCodeBuilder
 
     /// <summary>
     /// v11.0.1: Finds type by name in the context namespace hierarchy.
+    /// v12.1.0: Enhanced to search in all referenced assemblies via Compilation.
     /// </summary>
-    private ITypeSymbol? FindTypeByName(string typeName, ITypeSymbol? context)
+    private ITypeSymbol? FindTypeByName(string typeName, ITypeSymbol? context, Compilation? compilation = null)
     {
-        if (context == null) return null;
-
-        // Search in containing namespace and parent namespaces
-        var ns = context.ContainingNamespace;
-        while (ns != null && !ns.IsGlobalNamespace)
+        // First, try to find in context namespace hierarchy (fastest)
+        if (context != null)
         {
-            var type = ns.GetTypeMembers(typeName).FirstOrDefault();
-            if (type != null)
-                return type;
-            ns = ns.ContainingNamespace;
+            var ns = context.ContainingNamespace;
+            while (ns != null && !ns.IsGlobalNamespace)
+            {
+                var type = ns.GetTypeMembers(typeName).FirstOrDefault();
+                if (type != null)
+                    return type;
+                ns = ns.ContainingNamespace;
+            }
+        }
+
+        // v12.1.0: If not found and compilation is available, search all referenced types
+        if (compilation != null)
+        {
+            // Search in all source and referenced assemblies
+            foreach (var reference in compilation.References)
+            {
+                var assemblySymbol = compilation.GetAssemblyOrModuleSymbol(reference) as IAssemblySymbol;
+                if (assemblySymbol == null) continue;
+
+                var type = FindTypeInNamespace(assemblySymbol.GlobalNamespace, typeName);
+                if (type != null)
+                    return type;
+            }
+
+            // Also search in the compilation's own assembly
+            var ownType = FindTypeInNamespace(compilation.Assembly.GlobalNamespace, typeName);
+            if (ownType != null)
+                return ownType;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// v12.1.0: Recursively searches for a type by name in a namespace.
+    /// </summary>
+    private ITypeSymbol? FindTypeInNamespace(INamespaceSymbol ns, string typeName)
+    {
+        // Check types directly in this namespace
+        var type = ns.GetTypeMembers(typeName).FirstOrDefault();
+        if (type != null)
+            return type;
+
+        // Recursively search child namespaces
+        foreach (var childNs in ns.GetNamespaceMembers())
+        {
+            var foundType = FindTypeInNamespace(childNs, typeName);
+            if (foundType != null)
+                return foundType;
         }
 
         return null;
