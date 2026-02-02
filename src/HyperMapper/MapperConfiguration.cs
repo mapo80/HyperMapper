@@ -12,6 +12,8 @@ public class MapperConfiguration
     private readonly TypeMapRegistry _registry = new();
     // v8.0.0: Store typed delegates directly to avoid wrapper lambda overhead
     private readonly Dictionary<(Type, Type), Delegate> _generatedPlans = new();
+    // v12.0.0: Service locator for IValueResolver instantiation
+    private Func<Type, object>? _serviceLocator;
 
     public MapperConfiguration(Action<IMapperConfigurationExpression> configure)
         : this(configure, null)
@@ -22,6 +24,9 @@ public class MapperConfiguration
     {
         var expression = new MapperConfigurationExpression();
         configure(expression);
+
+        // v12.0.0: Store service locator
+        _serviceLocator = expression.ServiceLocator;
 
         foreach (var profile in expression.Profiles)
         {
@@ -51,7 +56,7 @@ public class MapperConfiguration
     /// </summary>
     public IMapper CreateMapper()
     {
-        return new Mapper(_registry, _generatedPlans);
+        return new Mapper(_registry, _generatedPlans, _serviceLocator);
     }
 
     /// <summary>
@@ -114,11 +119,18 @@ public interface IMapperConfigurationExpression
     /// v8.0.0: Scan assemblies containing the specified marker types.
     /// </summary>
     void AddMaps(IEnumerable<Type> assemblyMarkerTypes);
+
+    /// <summary>
+    /// v12.0.0: Configure a service locator for resolving IValueResolver instances.
+    /// AutoMapper API compatible.
+    /// </summary>
+    void ConstructServicesUsing(Func<Type, object> serviceLocator);
 }
 
 internal class MapperConfigurationExpression : IMapperConfigurationExpression
 {
     internal List<Profile> Profiles { get; } = new();
+    internal Func<Type, object>? ServiceLocator { get; private set; }
 
     public void AddProfile<TProfile>() where TProfile : Profile, new()
     {
@@ -150,6 +162,11 @@ internal class MapperConfigurationExpression : IMapperConfigurationExpression
             .Distinct()
             .ToArray();
         AddMaps(assemblies);
+    }
+
+    public void ConstructServicesUsing(Func<Type, object> serviceLocator)
+    {
+        ServiceLocator = serviceLocator;
     }
 
     private void ScanAssembly(Assembly assembly)

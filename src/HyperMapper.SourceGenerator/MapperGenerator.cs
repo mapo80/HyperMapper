@@ -591,7 +591,7 @@ public class MapperGenerator : IIncrementalGenerator
             optionsLambda.Body is ExpressionSyntax optionsBody)
         {
             // Walk the chain of method calls to extract all options
-            ExtractOptionsFromChain(optionsBody, memberMapping);
+            ExtractOptionsFromChain(optionsBody, memberMapping, semanticModel);
         }
 
         return memberMapping;
@@ -601,7 +601,7 @@ public class MapperGenerator : IIncrementalGenerator
     /// Extracts all options from a chained method call expression.
     /// Handles patterns like: opt.PreCondition(x).MapFrom(y)
     /// </summary>
-    private static void ExtractOptionsFromChain(ExpressionSyntax expression, MemberMapping memberMapping)
+    private static void ExtractOptionsFromChain(ExpressionSyntax expression, MemberMapping memberMapping, SemanticModel? semanticModel = null, CancellationToken cancellationToken = default)
     {
         var current = expression;
 
@@ -618,28 +618,64 @@ public class MapperGenerator : IIncrementalGenerator
                         break;
 
                     case "MapFrom":
-                        var mapFromArg = optionsInvocation.ArgumentList.Arguments.FirstOrDefault();
-                        if (mapFromArg?.Expression is SimpleLambdaExpressionSyntax mapFromLambda)
+                        // v12.0.0: Check if it's generic MapFrom<TResolver>() for IValueResolver
+                        if (optionsMemberAccess.Name is GenericNameSyntax genericMapFrom &&
+                            optionsInvocation.ArgumentList.Arguments.Count == 0)
                         {
-                            var paramName = mapFromLambda.Parameter.Identifier.Text;
-                            var bodyText = mapFromLambda.Body.ToString();
-                            memberMapping.SourceExpression = ReplaceParameterWithSource(bodyText, paramName);
-                        }
-                        else if (mapFromArg?.Expression is ParenthesizedLambdaExpressionSyntax mapFromMulti)
-                        {
-                            // v10.0.0: MapFrom((src, dest) => ...) - two parameters
-                            var parameters = mapFromMulti.ParameterList.Parameters;
-                            if (parameters.Count >= 2)
+                            // MapFrom<TResolver>() - extract the resolver type
+                            var typeArgs = genericMapFrom.TypeArgumentList.Arguments;
+                            if (typeArgs.Count == 1)
                             {
-                                var srcParam = parameters[0].Identifier.Text;
-                                var destParam = parameters[1].Identifier.Text;
-                                var bodyText = mapFromMulti.Body.ToString();
-                                // Replace source parameter with "source"
-                                bodyText = ReplaceParameterWithSource(bodyText, srcParam);
-                                // Replace destination parameter with "result"
-                                bodyText = bodyText.Replace($"{destParam}.", "result.");
-                                memberMapping.SourceExpression = bodyText;
-                                memberMapping.HasDestinationParameter = true;
+                                var resolverTypeSyntax = typeArgs[0];
+                                // Get the fully qualified type name
+                                if (semanticModel != null)
+                                {
+                                    var typeInfo = semanticModel.GetTypeInfo(resolverTypeSyntax, cancellationToken);
+                                    if (typeInfo.Type != null)
+                                    {
+                                        // Check if it implements IValueResolver<,,>
+                                        var isResolver = typeInfo.Type.AllInterfaces
+                                            .Any(i => i.Name == "IValueResolver" && i.TypeArguments.Length == 3);
+
+                                        if (isResolver)
+                                        {
+                                            memberMapping.ResolverTypeName = typeInfo.Type
+                                                .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                                                .Replace("global::", "");
+                                            break;
+                                        }
+                                    }
+                                }
+                                // Fallback: use the type name as-is
+                                memberMapping.ResolverTypeName = resolverTypeSyntax.ToString();
+                            }
+                        }
+                        else
+                        {
+                            // Standard MapFrom with lambda expression
+                            var mapFromArg = optionsInvocation.ArgumentList.Arguments.FirstOrDefault();
+                            if (mapFromArg?.Expression is SimpleLambdaExpressionSyntax mapFromLambda)
+                            {
+                                var paramName = mapFromLambda.Parameter.Identifier.Text;
+                                var bodyText = mapFromLambda.Body.ToString();
+                                memberMapping.SourceExpression = ReplaceParameterWithSource(bodyText, paramName);
+                            }
+                            else if (mapFromArg?.Expression is ParenthesizedLambdaExpressionSyntax mapFromMulti)
+                            {
+                                // v10.0.0: MapFrom((src, dest) => ...) - two parameters
+                                var parameters = mapFromMulti.ParameterList.Parameters;
+                                if (parameters.Count >= 2)
+                                {
+                                    var srcParam = parameters[0].Identifier.Text;
+                                    var destParam = parameters[1].Identifier.Text;
+                                    var bodyText = mapFromMulti.Body.ToString();
+                                    // Replace source parameter with "source"
+                                    bodyText = ReplaceParameterWithSource(bodyText, srcParam);
+                                    // Replace destination parameter with "result"
+                                    bodyText = bodyText.Replace($"{destParam}.", "result.");
+                                    memberMapping.SourceExpression = bodyText;
+                                    memberMapping.HasDestinationParameter = true;
+                                }
                             }
                         }
                         break;

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 
 namespace HyperMapper.Internal;
 
@@ -419,6 +420,13 @@ internal class TypeMapRegistry
         if (elementTypeMap?.IncludedDerivedTypes.Count > 0)
         {
             return null; // Force legacy path for polymorphic dispatch
+        }
+
+        // v12.0.0: Skip collection execution plan if element type has IValueResolver
+        // Value resolvers require runtime invocation which can't be inlined into collection plans
+        if (elementTypeMap?.MemberMaps.Any(m => m.HasValueResolver) == true)
+        {
+            return null; // Force legacy path for IValueResolver support
         }
 
         var key = (sourceCollectionType, destCollectionType, sourceElementType, destElementType);

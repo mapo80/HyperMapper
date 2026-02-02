@@ -59,3 +59,61 @@ public class AutoDeepProfile : AutoMapper.Profile
         CreateMap<DeepLevel1Source, DeepLevel1Destination>();
     }
 }
+
+// ========== VALUE RESOLVER PROFILES (SMALL - AutoMapper) ==========
+
+public class AutoMapperSmallResolverProfile : AutoMapper.Profile
+{
+    public AutoMapperSmallResolverProfile()
+    {
+        CreateMap<ValueResolverSmallSource, ValueResolverSmallDestination>()
+            .ForMember(d => d.FullName, opt => opt.MapFrom<AutoSmallFullNameResolver>());
+    }
+}
+
+public class AutoSmallFullNameResolver : AutoMapper.IValueResolver<ValueResolverSmallSource, ValueResolverSmallDestination, string>
+{
+    public string Resolve(ValueResolverSmallSource source, ValueResolverSmallDestination dest,
+        string member, AutoMapper.ResolutionContext context)
+        => $"{source.FirstName} {source.LastName}";
+}
+
+// ========== VALUE RESOLVER PROFILES (FULL - AutoMapper) ==========
+
+public class AutoMapperValueResolverProfile : AutoMapper.Profile
+{
+    public AutoMapperValueResolverProfile()
+    {
+        CreateMap<ValueResolverSource, ValueResolverDestination>()
+            .ForMember(d => d.FullName, opt => opt.MapFrom<AutoFullNameResolver>())
+            .ForMember(d => d.FormattedAmount, opt => opt.MapFrom<AutoAmountResolver>())
+            .ForMember(d => d.StatusEnum, opt => opt.MapFrom<AutoStatusResolver>());
+    }
+}
+
+public class AutoFullNameResolver : AutoMapper.IValueResolver<ValueResolverSource, ValueResolverDestination, string>
+{
+    public string Resolve(ValueResolverSource source, ValueResolverDestination dest,
+        string member, AutoMapper.ResolutionContext context)
+        => $"{source.FirstName} {source.LastName}";
+}
+
+public class AutoAmountResolver : AutoMapper.IValueResolver<ValueResolverSource, ValueResolverDestination, string>
+{
+    public string Resolve(ValueResolverSource source, ValueResolverDestination dest,
+        string member, AutoMapper.ResolutionContext context)
+        => source.Amount.ToString("C2", System.Globalization.CultureInfo.GetCultureInfo("en-US"));
+}
+
+public class AutoStatusResolver : AutoMapper.IValueResolver<ValueResolverSource, ValueResolverDestination, VRStatusEnum>
+{
+    public VRStatusEnum Resolve(ValueResolverSource source, ValueResolverDestination dest,
+        VRStatusEnum member, AutoMapper.ResolutionContext context)
+        => source.Status switch
+        {
+            "Active" => VRStatusEnum.Active,
+            "Inactive" => VRStatusEnum.Inactive,
+            "Pending" => VRStatusEnum.Pending,
+            _ => VRStatusEnum.Unknown
+        };
+}

@@ -80,10 +80,39 @@ internal class MemberConfigurationExpression<TSource, TDestination, TMember>
 
     private Func<TSource, TDestination, TMember, ResolutionContext, bool>? _conditionWithContext;
 
+    // v12.0.0: IValueResolver support
+    private Type? _resolverType;
+    private object? _resolverInstance;
+
     public void NullSubstitute(TMember substituteValue)
     {
         _nullSubstitute = substituteValue;
         _hasNullSubstitute = true;
+    }
+
+    public void MapFrom<TValueResolver>()
+        where TValueResolver : IValueResolver<TSource, TDestination, TMember>
+    {
+        _resolverType = typeof(TValueResolver);
+        _resolverInstance = null;
+        // Clear other mapping mechanisms
+        _sourceExpression = null;
+        _sourceValueResolver = null;
+        _compiledResolver = null;
+        _hasDestinationParameter = false;
+        _destinationResolver = null;
+    }
+
+    public void MapFrom(IValueResolver<TSource, TDestination, TMember> resolver)
+    {
+        _resolverType = resolver.GetType();
+        _resolverInstance = resolver;
+        // Clear other mapping mechanisms
+        _sourceExpression = null;
+        _sourceValueResolver = null;
+        _compiledResolver = null;
+        _hasDestinationParameter = false;
+        _destinationResolver = null;
     }
 
     internal MemberMap ToMemberMap()
@@ -105,7 +134,10 @@ internal class MemberConfigurationExpression<TSource, TDestination, TMember>
             SourceExpressionReturnType = _sourceExpressionReturnType,
             // v10.0.0: Pass destination-dependent resolver
             HasDestinationParameter = _hasDestinationParameter,
-            DestinationResolver = _destinationResolver
+            DestinationResolver = _destinationResolver,
+            // v12.0.0: Pass IValueResolver configuration
+            ResolverType = _resolverType,
+            ResolverInstance = _resolverInstance
         };
     }
 }

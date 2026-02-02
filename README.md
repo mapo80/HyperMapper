@@ -144,6 +144,7 @@ HyperMapper is a high-performance object mapping library designed to be fully co
 - [CodeGen Mode Documentation](#codegen-mode-documentation)
 - [API Reference](#api-reference)
 - [Advanced Features](#advanced-features)
+  - [Value Resolvers](#value-resolvers-v1200)
 - [Examples](#examples)
 - [Testing and Coverage](#testing-and-coverage)
 - [Benchmarks](#benchmarks)
@@ -464,6 +465,7 @@ find . -name "*.cs" -exec sed -i '' 's/using AutoMapper;/using HyperMapper;/g' {
 - `ReverseMap()`
 - `MapperConfiguration` with `AddProfile<>()`
 - `ITypeConverter<TSource, TDest>`
+- `IValueResolver<TSource, TDest, TMember>` with `MapFrom<TResolver>()` (NEW in v12.0.0)
 - `ResolutionContext`
 - Collection mapping (List, Array, IEnumerable, Dictionary, etc.)
 - Enum to string conversion
@@ -1104,6 +1106,120 @@ public class User
 cfg.AddMaps(Assembly.GetExecutingAssembly());
 ```
 
+### Value Resolvers (v12.0.0)
+
+Custom value resolvers provide reusable, testable mapping logic for complex member transformations. The `IValueResolver` interface is 100% compatible with AutoMapper.
+
+#### Interface Definition
+
+```csharp
+public interface IValueResolver<in TSource, in TDestination, TDestMember>
+{
+    TDestMember Resolve(TSource source, TDestination destination,
+        TDestMember destMember, ResolutionContext context);
+}
+```
+
+#### Basic Usage
+
+```csharp
+// 1. Define a resolver
+public class FullNameResolver : IValueResolver<User, UserDto, string>
+{
+    public string Resolve(User source, UserDto destination,
+        string destMember, ResolutionContext context)
+    {
+        return $"{source.FirstName} {source.LastName}";
+    }
+}
+
+// 2. Use in Profile
+public class UserProfile : Profile
+{
+    public UserProfile()
+    {
+        CreateMap<User, UserDto>()
+            .ForMember(d => d.FullName, opt => opt.MapFrom<FullNameResolver>());
+    }
+}
+```
+
+#### Instance-Based Registration
+
+You can also provide a pre-instantiated resolver:
+
+```csharp
+var resolver = new CurrencyFormatter("USD");
+CreateMap<Order, OrderDto>()
+    .ForMember(d => d.Total, opt => opt.MapFrom(resolver));
+```
+
+#### Dependency Injection Support
+
+Use `ConstructServicesUsing` to integrate with your DI container:
+
+```csharp
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.ConstructServicesUsing(type => serviceProvider.GetService(type)!);
+    cfg.AddProfile<UserProfile>();
+});
+```
+
+Now resolvers can have constructor dependencies injected:
+
+```csharp
+public class PricingResolver : IValueResolver<Order, OrderDto, decimal>
+{
+    private readonly IPricingService _pricing;
+
+    public PricingResolver(IPricingService pricing)
+    {
+        _pricing = pricing;
+    }
+
+    public decimal Resolve(Order source, OrderDto destination,
+        decimal destMember, ResolutionContext context)
+    {
+        return _pricing.Calculate(source.Items);
+    }
+}
+```
+
+#### Nested Mapping via Context
+
+Access the mapper through the resolution context to perform nested mappings:
+
+```csharp
+public class CustomerResolver : IValueResolver<Order, OrderDto, CustomerInfo>
+{
+    public CustomerInfo Resolve(Order source, OrderDto dest,
+        CustomerInfo member, ResolutionContext context)
+    {
+        return context.Mapper.Map<CustomerInfo>(source.Customer);
+    }
+}
+```
+
+#### Combining with PreCondition
+
+Value resolvers work seamlessly with `PreCondition`:
+
+```csharp
+CreateMap<Source, Dest>()
+    .ForMember(d => d.Value, opt =>
+    {
+        opt.PreCondition(src => src.ShouldMap);
+        opt.MapFrom<MyValueResolver>();
+    });
+```
+
+#### CodeGen Mode Support
+
+Value resolvers are fully supported in both Runtime and CodeGen modes. In CodeGen mode, the resolver is instantiated via `Activator.CreateInstance()` and the generated code calls the `Resolve` method directly.
+
+**Note:** In CodeGen mode, the `ResolutionContext` parameter may be `null`. Resolvers that depend on `context.Mapper` for nested mappings will fall back to Runtime execution.
+
 ---
 
 ## Examples
@@ -1234,6 +1350,49 @@ public interface IMappingExpression<TSource, TDestination>
     IMappingExpression<TSource, TDestination> PreserveReferences();
     IMappingExpression<TSource, TDestination> IncludeMembers(params Expression<Func<TSource, object>>[] memberExpressions);
     IMappingExpression<TDestination, TSource> ReverseMap();
+}
+```
+
+### IMemberConfigurationExpression
+
+Member-level configuration options within `ForMember()`:
+
+```csharp
+public interface IMemberConfigurationExpression<TSource, TDestination, TMember>
+{
+    // Value mapping
+    void MapFrom<TSourceMember>(Expression<Func<TSource, TSourceMember>> sourceMember);
+    void MapFrom<TSourceMember>(Func<TSource, TDestination, TSourceMember> resolver);
+    void MapFrom(string sourceMemberName);
+
+    // Value Resolvers (v12.0.0)
+    void MapFrom<TValueResolver>()
+        where TValueResolver : IValueResolver<TSource, TDestination, TMember>;
+    void MapFrom(IValueResolver<TSource, TDestination, TMember> resolver);
+
+    // Conditions
+    void PreCondition(Func<TSource, bool> condition);
+    void Condition(Func<TSource, TDestination, TMember, bool> condition);
+
+    // Ignore and substitute
+    void Ignore();
+    void NullSubstitute(TMember nullSubstitute);
+
+    // Other
+    void UseDestinationValue();
+    void SetMappingOrder(int mappingOrder);
+}
+```
+
+### IValueResolver (v12.0.0)
+
+Interface for custom value resolution:
+
+```csharp
+public interface IValueResolver<in TSource, in TDestination, TDestMember>
+{
+    TDestMember Resolve(TSource source, TDestination destination,
+        TDestMember destMember, ResolutionContext context);
 }
 ```
 

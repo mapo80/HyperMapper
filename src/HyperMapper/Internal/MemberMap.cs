@@ -67,6 +67,21 @@ internal class MemberMap
     /// </summary>
     public bool HasDestinationParameter { get; set; }
 
+    /// <summary>
+    /// v12.0.0: Type of IValueResolver to use for this member.
+    /// </summary>
+    public Type? ResolverType { get; set; }
+
+    /// <summary>
+    /// v12.0.0: Pre-created IValueResolver instance (optional).
+    /// </summary>
+    public object? ResolverInstance { get; set; }
+
+    /// <summary>
+    /// v12.0.0: Indicates whether this member uses an IValueResolver.
+    /// </summary>
+    public bool HasValueResolver => ResolverType != null;
+
     public MemberMap(string destinationMemberName)
     {
         DestinationMemberName = destinationMemberName;

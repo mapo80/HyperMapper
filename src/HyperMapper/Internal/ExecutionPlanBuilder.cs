@@ -233,6 +233,12 @@ internal class ExecutionPlanBuilder
                 {
                     return emptyResult;
                 }
+
+                // v12.0.0: Members with IValueResolver need runtime execution
+                if (memberMap.HasValueResolver)
+                {
+                    return emptyResult;
+                }
             }
         }
 

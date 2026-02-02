@@ -168,10 +168,15 @@ internal class MappingCodeBuilder
         var hasDestinationParameterMappings = mapping.MemberMappings
             .Any(m => m.HasDestinationParameter);
 
+        // v12.0.0: Check if any member uses IValueResolver
+        var hasValueResolverMappings = mapping.MemberMappings
+            .Any(m => m.HasValueResolver);
+
         // v8.1.0: Need result variable if we have PreConditions OR Conditions
         // v9.0.0: Also need result variable if we have ctor params (to set remaining properties) or path mappings
         // v10.0.0: Also need result variable if we have MapFrom with destination parameter
-        var needsResultVariable = hasGeneratablePreConditions || hasGeneratableConditions || hasCtorParams || hasPathMappings || hasDestinationParameterMappings;
+        // v12.0.0: Also need result variable if we have IValueResolver mappings
+        var needsResultVariable = hasGeneratablePreConditions || hasGeneratableConditions || hasCtorParams || hasPathMappings || hasDestinationParameterMappings || hasValueResolverMappings;
 
         sb.AppendLine($"    /// <summary>");
         sb.AppendLine($"    /// Maps {sourceType} to {destType}");
@@ -301,6 +306,11 @@ internal class MappingCodeBuilder
             .Where(m => m.HasDestinationParameter && !string.IsNullOrEmpty(m.SourceExpression))
             .ToDictionary(m => m.DestinationMember, m => m, StringComparer.Ordinal);
 
+        // v12.0.0: Build lookup for IValueResolver mappings
+        var valueResolverMappings = mapping.MemberMappings
+            .Where(m => m.HasValueResolver)
+            .ToDictionary(m => m.DestinationMember, m => m, StringComparer.Ordinal);
+
         // Generate property assignments for non-PreCondition and non-Condition properties
         foreach (var destProp in destProperties)
         {
@@ -318,6 +328,10 @@ internal class MappingCodeBuilder
 
             // v10.0.0: Skip if has destination parameter (handled separately after object initialization)
             if (destParamMappings.ContainsKey(destProp.Name))
+                continue;
+
+            // v12.0.0: Skip if has IValueResolver (handled separately after object initialization)
+            if (valueResolverMappings.ContainsKey(destProp.Name))
                 continue;
 
             // v9.0.0: Skip if already mapped via ForCtorParam
@@ -504,6 +518,25 @@ internal class MappingCodeBuilder
 
             sb.AppendLine();
             sb.AppendLine($"        result.{destPropName} = {valueExpr};");
+        }
+
+        // v12.0.0: Generate IValueResolver invocations
+        // Note: context is null in CodeGen mode - resolvers that need context.Mapper should use runtime mode
+        foreach (var kvp in valueResolverMappings)
+        {
+            var destPropName = kvp.Key;
+            var memberMapping = kvp.Value;
+
+            // Find the destination property to get its type
+            var destProp = destProperties.FirstOrDefault(p => p.Name == destPropName);
+            if (destProp == null) continue;
+
+            var destMemberType = destProp.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+            sb.AppendLine();
+            sb.AppendLine($"        // IValueResolver for {destPropName}");
+            sb.AppendLine($"        result.{destPropName} = (({memberMapping.ResolverTypeName})global::System.Activator.CreateInstance(typeof({memberMapping.ResolverTypeName}))!)");
+            sb.AppendLine($"            .Resolve({sourceVarName}, result, default({destMemberType})!, null!);");
         }
 
         // v9.0.0: Generate ForPath assignments

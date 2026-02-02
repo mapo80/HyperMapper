@@ -47,4 +47,18 @@ public interface IMemberConfigurationExpression<TSource, TDestination, TMember>
     /// AutoMapper API compatible.
     /// </summary>
     void NullSubstitute(TMember substituteValue);
+
+    /// <summary>
+    /// Map this member using a custom value resolver type.
+    /// The resolver is instantiated via ConstructServicesUsing() delegate.
+    /// AutoMapper API compatible.
+    /// </summary>
+    void MapFrom<TValueResolver>()
+        where TValueResolver : IValueResolver<TSource, TDestination, TMember>;
+
+    /// <summary>
+    /// Map this member using a custom value resolver instance.
+    /// AutoMapper API compatible.
+    /// </summary>
+    void MapFrom(IValueResolver<TSource, TDestination, TMember> resolver);
 }

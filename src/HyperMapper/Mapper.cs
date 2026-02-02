@@ -1,6 +1,8 @@
 using System.Buffers;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using HyperMapper.Internal;
@@ -13,17 +15,29 @@ internal class Mapper : IMapper
     // v8.0.0: Store typed delegates directly for maximum performance
     private readonly Dictionary<(Type, Type), Delegate> _generatedPlans;
     private readonly ResolutionContext _context;
+    // v12.0.0: Service locator for IValueResolver instantiation
+    private readonly Func<Type, object>? _serviceLocator;
+
+    // v12.0.0: Cache for compiled resolver delegates
+    private static readonly ConcurrentDictionary<Type, Func<object, object, object, object?, ResolutionContext, object?>>
+        _resolverDelegateCache = new();
 
     internal Mapper(TypeMapRegistry registry)
-        : this(registry, new Dictionary<(Type, Type), Delegate>())
+        : this(registry, new Dictionary<(Type, Type), Delegate>(), null)
     {
     }
 
     internal Mapper(TypeMapRegistry registry, Dictionary<(Type, Type), Delegate> generatedPlans)
+        : this(registry, generatedPlans, null)
+    {
+    }
+
+    internal Mapper(TypeMapRegistry registry, Dictionary<(Type, Type), Delegate> generatedPlans, Func<Type, object>? serviceLocator)
     {
         _registry = registry;
         _generatedPlans = generatedPlans;
         _context = new ResolutionContext(this);
+        _serviceLocator = serviceLocator;
     }
 
     public TDestination Map<TDestination>(object source)
@@ -997,8 +1011,22 @@ internal class Mapper : IMapper
 
         object? value = null;
 
+        // v12.0.0: IValueResolver takes priority
+        if (memberMap.HasValueResolver)
+        {
+            try
+            {
+                var currentDestValue = ReflectionCache.GetValue(destProp, destination);
+                value = InvokeValueResolver(memberMap, source, destination, currentDestValue);
+            }
+            catch
+            {
+                // If the resolver fails, skip this member
+                return;
+            }
+        }
         // Use CompiledResolver to avoid DynamicInvoke overhead
-        if (memberMap.CompiledResolver != null)
+        else if (memberMap.CompiledResolver != null)
         {
             try
             {
@@ -1439,7 +1467,20 @@ internal class Mapper : IMapper
 
         object? value = null;
 
-        if (memberMap.CompiledResolver != null)
+        // v12.0.0: IValueResolver takes priority
+        if (memberMap.HasValueResolver)
+        {
+            try
+            {
+                var currentDestValue = ReflectionCache.GetValue(destProp, destination);
+                value = InvokeValueResolver(memberMap, source, destination, currentDestValue);
+            }
+            catch
+            {
+                return destination;
+            }
+        }
+        else if (memberMap.CompiledResolver != null)
         {
             try
             {
@@ -2159,7 +2200,20 @@ internal class Mapper : IMapper
 
         object? value = null;
 
-        if (memberMap.CompiledResolver != null)
+        // v12.0.0: IValueResolver takes priority
+        if (memberMap.HasValueResolver)
+        {
+            try
+            {
+                var currentDestValue = ReflectionCache.GetValue(destProp, destination);
+                value = InvokeValueResolver(memberMap, source, destination, currentDestValue);
+            }
+            catch
+            {
+                return;
+            }
+        }
+        else if (memberMap.CompiledResolver != null)
         {
             try
             {
@@ -2425,6 +2479,87 @@ internal class Mapper : IMapper
             // AfterMap errors are propagated - don't swallow them
             throw;
         }
+    }
+
+    #endregion
+
+    #region v12.0.0: IValueResolver Support
+
+    /// <summary>
+    /// Invokes an IValueResolver to resolve a member value.
+    /// </summary>
+    private object? InvokeValueResolver(MemberMap memberMap, object source, object destination, object? currentDestValue)
+    {
+        if (!memberMap.HasValueResolver) return currentDestValue;
+
+        // Get or create resolver instance
+        var resolver = memberMap.ResolverInstance
+            ?? _serviceLocator?.Invoke(memberMap.ResolverType!)
+            ?? Activator.CreateInstance(memberMap.ResolverType!);
+
+        if (resolver == null) return currentDestValue;
+
+        // Use cached compiled delegate for performance
+        var del = GetOrCreateResolverDelegate(memberMap.ResolverType!);
+        return del(resolver, source, destination, currentDestValue, _context);
+    }
+
+    /// <summary>
+    /// Gets or creates a compiled delegate for invoking an IValueResolver.
+    /// The delegate avoids reflection overhead after the first call.
+    /// </summary>
+    private static Func<object, object, object, object?, ResolutionContext, object?>
+        GetOrCreateResolverDelegate(Type resolverType)
+    {
+        return _resolverDelegateCache.GetOrAdd(resolverType, type =>
+        {
+            var resolverInterface = type.GetInterfaces()
+                .FirstOrDefault(i => i.IsGenericType &&
+                    i.GetGenericTypeDefinition() == typeof(IValueResolver<,,>));
+
+            if (resolverInterface == null)
+            {
+                throw new InvalidOperationException(
+                    $"Type '{type.FullName}' does not implement IValueResolver<,,>.");
+            }
+
+            var typeArgs = resolverInterface.GetGenericArguments();
+
+            var resolverParam = Expression.Parameter(typeof(object), "resolver");
+            var sourceParam = Expression.Parameter(typeof(object), "source");
+            var destParam = Expression.Parameter(typeof(object), "dest");
+            var memberParam = Expression.Parameter(typeof(object), "member");
+            var contextParam = Expression.Parameter(typeof(ResolutionContext), "context");
+
+            // Handle null member value for value types
+            Expression convertedMember;
+            if (typeArgs[2].IsValueType)
+            {
+                // For value types: member == null ? default(T) : (T)member
+                convertedMember = Expression.Condition(
+                    Expression.Equal(memberParam, Expression.Constant(null)),
+                    Expression.Default(typeArgs[2]),
+                    Expression.Convert(memberParam, typeArgs[2]));
+            }
+            else
+            {
+                // For reference types: just cast
+                convertedMember = Expression.Convert(memberParam, typeArgs[2]);
+            }
+
+            var call = Expression.Call(
+                Expression.Convert(resolverParam, type),
+                "Resolve",
+                Type.EmptyTypes,
+                Expression.Convert(sourceParam, typeArgs[0]),
+                Expression.Convert(destParam, typeArgs[1]),
+                convertedMember,
+                contextParam);
+
+            return Expression.Lambda<Func<object, object, object, object?, ResolutionContext, object?>>(
+                Expression.Convert(call, typeof(object)),
+                resolverParam, sourceParam, destParam, memberParam, contextParam).Compile();
+        });
     }
 
     #endregion

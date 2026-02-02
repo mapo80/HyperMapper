@@ -45,6 +45,16 @@ internal sealed class MemberMapping : IEquatable<MemberMapping>
     /// </summary>
     public bool HasDestinationParameter { get; set; }
 
+    /// <summary>
+    /// v12.0.0: Fully qualified type name of the IValueResolver.
+    /// </summary>
+    public string? ResolverTypeName { get; set; }
+
+    /// <summary>
+    /// v12.0.0: Whether this member uses an IValueResolver.
+    /// </summary>
+    public bool HasValueResolver => !string.IsNullOrEmpty(ResolverTypeName);
+
     public bool Equals(MemberMapping? other)
     {
         if (other is null) return false;
@@ -57,7 +67,8 @@ internal sealed class MemberMapping : IEquatable<MemberMapping>
                HasNullSubstitute == other.HasNullSubstitute &&
                NullSubstituteExpression == other.NullSubstituteExpression &&
                HasCondition == other.HasCondition &&
-               ConditionExpression == other.ConditionExpression;
+               ConditionExpression == other.ConditionExpression &&
+               ResolverTypeName == other.ResolverTypeName;
     }
 
     public override bool Equals(object? obj) => Equals(obj as MemberMapping);
@@ -76,6 +87,7 @@ internal sealed class MemberMapping : IEquatable<MemberMapping>
             hash = hash * 31 + (NullSubstituteExpression?.GetHashCode() ?? 0);
             hash = hash * 31 + HasCondition.GetHashCode();
             hash = hash * 31 + (ConditionExpression?.GetHashCode() ?? 0);
+            hash = hash * 31 + (ResolverTypeName?.GetHashCode() ?? 0);
             return hash;
         }
     }
