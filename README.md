@@ -922,6 +922,108 @@ public IQueryable<Order> GetFilteredOrders(OrderFilterDto filter)
 
 **Result**: ✅ API endpoint works correctly, all DTOs fully populated
 
+### Lazy Loading Proxies Compatibility Issue
+
+⚠️ **CRITICAL**: HyperMapper CodeGen mode is **incompatible** with Entity Framework Core's `.UseLazyLoadingProxies()` feature.
+
+#### The Problem
+
+When using EF Core with `.UseLazyLoadingProxies()`, Entity Framework creates **dynamic proxy classes** at runtime that intercept property access to enable lazy loading. HyperMapper's CodeGen mode generates **compiled code** that cannot properly access properties of these proxy classes, resulting in `null` values even when navigation properties are explicitly loaded with `.Include()`.
+
+**Symptoms:**
+- Navigation properties are `null` in mapped DTOs
+- Problem occurs only with SQL Server or other real databases (not InMemory)
+- `.Include()` statements appear to be ignored
+- Same code works with AutoMapper
+
+**Root Cause:**
+```csharp
+// With .UseLazyLoadingProxies() enabled:
+var entity = await context.Orders.Include(o => o.Customer).FirstAsync();
+
+// EF returns a dynamic proxy class: OrderProxy (inherits from Order)
+// entity.Customer is loaded ✅
+
+// HyperMapper CodeGen generates:
+// return new OrderDto { CustomerName = source.Customer.Name };
+
+// Problem: The generated code cannot access properties of proxy classes correctly
+// Result: source.Customer is null ❌ even though it was loaded
+```
+
+#### The Solution: Disable Lazy Loading Proxies
+
+**Remove `.UseLazyLoadingProxies()` from your DbContext configuration:**
+
+```csharp
+// ❌ BEFORE (doesn't work with HyperMapper CodeGen)
+services.AddDbContext<AppDbContext>((serviceProvider, options) =>
+{
+    options.UseLazyLoadingProxies();  // ← Remove this
+    options.UseSqlServer(connectionString);
+});
+
+// ✅ AFTER (works with HyperMapper CodeGen)
+services.AddDbContext<AppDbContext>((serviceProvider, options) =>
+{
+    // Lazy loading proxies disabled for HyperMapper CodeGen compatibility
+    // All navigation properties must be explicitly loaded with .Include()
+    options.UseSqlServer(connectionString);
+});
+```
+
+**Why This Works:**
+- Without lazy loading proxies, EF Core returns **concrete entity classes** instead of dynamic proxies
+- HyperMapper's generated code can access properties of concrete classes correctly
+- Explicit `.Include()` ensures all navigation properties are loaded before mapping
+- No performance penalty - explicit loading is actually more efficient than lazy loading
+
+#### Testing with Production Database
+
+To verify the fix works with your production database, create a diagnostic test:
+
+```csharp
+[Fact(Skip = "Diagnostic - connects to production database")]
+public async Task ProductionDatabase_VerifyNavigationProperties()
+{
+    // Create DbContext WITHOUT lazy loading proxies
+    var options = new DbContextOptionsBuilder<AppDbContext>()
+        .UseSqlServer("your-production-connection-string")
+        // .UseLazyLoadingProxies()  // ← Disabled
+        .Options;
+
+    await using var context = new AppDbContext(options);
+    var mapper = CreateMapper();
+
+    // Load entities with Include
+    var entities = await context.Orders
+        .Include(o => o.Customer)
+            .ThenInclude(c => c.Address)
+        .Take(3)
+        .ToListAsync();
+
+    // Map to DTOs
+    var dtos = mapper.Map<List<OrderDto>>(entities);
+
+    // Verify navigation properties are populated
+    Assert.NotNull(dtos.First().Customer);
+    Assert.NotNull(dtos.First().Customer.Address);
+}
+```
+
+#### Migration Checklist
+
+When disabling lazy loading proxies:
+
+- [ ] Remove `.UseLazyLoadingProxies()` from all DbContext configurations
+- [ ] Verify all repository methods use explicit `.Include()` for navigation properties
+- [ ] Add `.Include()` statements for any missing navigation properties
+- [ ] Create integration tests with real database to verify Include statements work
+- [ ] Update all environments (Development, Staging, Production)
+- [ ] Restart application after deployment to clear EF Core cached plans
+
+**Reference**: See [Real-World Example](#real-world-example) section above for complete repository patterns with explicit Include.
+
 ---
 
 ## Runtime Mode Documentation
