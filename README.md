@@ -140,6 +140,13 @@ HyperMapper is a high-performance object mapping library designed to be fully co
   - [Runtime vs CodeGen Comparison](#runtime-vs-codegen-comparison)
   - [When to Use Each Mode](#when-to-use-each-mode)
 - [Migration from AutoMapper](#migration-from-automapper)
+- [Entity Framework & Lazy Loading Considerations](#entity-framework--lazy-loading-considerations)
+  - [The Issue](#the-issue-lazy-loading-behavioral-difference)
+  - [Why This Happens](#why-this-happens)
+  - [Identifying Lazy Loading Dependencies](#identifying-lazy-loading-dependencies)
+  - [Solution: Explicit Eager Loading](#solution-explicit-eager-loading)
+  - [Testing Strategy](#testing-strategy)
+  - [Best Practices](#best-practices)
 - [Runtime Mode Documentation](#runtime-mode-documentation)
 - [CodeGen Mode Documentation](#codegen-mode-documentation)
 - [API Reference](#api-reference)
@@ -511,6 +518,409 @@ The typed API (`Map<TSource, TDest>`) uses compile-time generated mappers with d
 - [ ] Run tests to validate functionality
 - [ ] (Optional) Enable CodeGen Mode for production performance
 - [ ] (Optional) Add `HyperMapperGeneratedRegistry.Initialize(config)` for 2-3x speedup
+
+---
+
+## Entity Framework & Lazy Loading Considerations
+
+⚠️ **IMPORTANT**: If you're using Entity Framework Core with lazy loading proxies, read this section carefully before migrating to HyperMapper.
+
+### Overview
+
+HyperMapper's CodeGen mode generates **compiled code** at build-time, which fundamentally changes how navigation properties are accessed compared to AutoMapper's runtime reflection. This difference has critical implications when working with Entity Framework Core's lazy loading feature.
+
+**Key Insight**: AutoMapper can trigger EF lazy loading through reflection, but HyperMapper's compiled code cannot. This means navigation properties that worked automatically with AutoMapper will be `null` with HyperMapper unless explicitly loaded.
+
+### The Issue: Lazy Loading Behavioral Difference
+
+**AutoMapper (Runtime Reflection)**
+- Uses `PropertyInfo.GetValue()` to access navigation properties
+- EF Core proxies intercept these reflection calls
+- Lazy loading is automatically triggered
+- Navigation properties are loaded on-demand
+- ✅ Works with lazy loading
+
+**HyperMapper (Compiled Code)**
+- Generates direct property access: `entity.NavigationProperty`
+- EF Core proxies **cannot intercept** compiled code
+- No lazy loading trigger
+- Navigation properties remain `null` if not pre-loaded
+- ❌ Does **not** work with lazy loading
+
+**Example:**
+```csharp
+// With AutoMapper (lazy loading works)
+CreateMap<Order, OrderDto>()
+    .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(
+        src => src.Customer.Name  // ✅ Customer is lazy-loaded automatically
+    ));
+
+// With HyperMapper (lazy loading does NOT work)
+CreateMap<Order, OrderDto>()
+    .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(
+        src => src.Customer.Name  // ❌ Customer is NULL - NullReferenceException!
+    ));
+```
+
+### Why This Happens
+
+The difference lies in how the two libraries access entity properties:
+
+```csharp
+// AutoMapper (Runtime)
+// 1. PropertyInfo.GetValue(entity, "Customer")
+// 2. EF proxy intercepts PropertyInfo.GetValue()
+// 3. Lazy loading triggered ✅
+// 4. Customer entity loaded from database
+// 5. Returns loaded Customer
+
+// HyperMapper (CodeGen)
+// 1. Generated code: return entity.Customer.Name;
+// 2. Direct property access - no interception possible
+// 3. Customer is NULL (not loaded)
+// 4. NullReferenceException ❌
+```
+
+EF Core's lazy loading relies on **method interception** at runtime. Since HyperMapper generates static compiled code, there's no runtime method call to intercept.
+
+### Identifying Lazy Loading Dependencies
+
+Before migrating to HyperMapper, identify all places where your code relies on lazy loading:
+
+**Strategy 1: Analyze Repository Queries**
+
+Look for repository methods that return `IQueryable` or entities without `.Include()`:
+
+```csharp
+// ❌ PROBLEM: Query without Include
+public IQueryable<Order> GetFilteredOrders(OrderFilterDto filter)
+{
+    return _context.Set<Order>()
+        .Where(o => o.OrderDate >= filter.FromDate);
+        // Navigation properties (Customer, OrderItems) will be NULL with HyperMapper
+}
+```
+
+**Strategy 2: Analyze Mapping Profiles**
+
+Search for mappings that access navigation properties:
+
+```csharp
+// Look for patterns like this in your Profile classes
+CreateMap<Order, OrderDetailDto>()
+    .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(
+        src => src.Customer.Name  // ← Customer navigation property
+        //     ^^^^^^^^^^^^
+        //     This MUST be pre-loaded with .Include()
+    ))
+    .ForMember(dest => dest.ProductName, opt => opt.MapFrom(
+        src => src.OrderItems.First().Product.Name
+        //     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        //     Nested navigation properties MUST be pre-loaded
+    ));
+```
+
+**Strategy 3: Grep for Navigation Properties**
+
+Use command-line tools to find all navigation property accesses:
+
+```bash
+# Find all navigation property accesses in mapping profiles
+grep -r "src\." --include="*Profile.cs" . | grep -E "\.\w+Navigation|\.\w+\.\w+"
+
+# Find repository methods that might need Include
+grep -r "IQueryable<" --include="*Repository.cs" .
+```
+
+### Solution: Explicit Eager Loading
+
+The solution is to **explicitly load** all navigation properties using `.Include()` and `.ThenInclude()`.
+
+**Pattern 1: Simple Include (1 level)**
+```csharp
+var orders = _context.Orders
+    .Include(o => o.Customer)  // Load Customer navigation property
+    .ToList();
+```
+
+**Pattern 2: Nested Include (multiple levels)**
+```csharp
+var orders = _context.Orders
+    .Include(o => o.Customer)           // Level 1
+        .ThenInclude(c => c.Address)    // Level 2
+            .ThenInclude(a => a.Country)  // Level 3
+    .ToList();
+```
+
+**Pattern 3: Multiple Branches from Same Root**
+```csharp
+var orders = _context.Orders
+    .Include(o => o.Customer)
+        .ThenInclude(c => c.Address)
+    .Include(o => o.Customer)  // Repeat root for different branch
+        .ThenInclude(c => c.PreferredPaymentMethod)
+    .ToList();
+```
+
+**Pattern 4: Collection Navigation Properties**
+```csharp
+var orders = _context.Orders
+    .Include(o => o.OrderItems)           // Collection
+        .ThenInclude(item => item.Product)  // Items in collection
+    .ToList();
+```
+
+**Pattern 5: Collections + Other Properties**
+```csharp
+var orders = _context.Orders
+    .Include(o => o.OrderItems)
+        .ThenInclude(item => item.Product)
+    .Include(o => o.Customer)
+        .ThenInclude(c => c.Address)
+    .ToList();
+```
+
+### Complete Before/After Example
+
+**❌ BEFORE (AutoMapper - relies on lazy loading)**
+```csharp
+// Repository
+public IQueryable<Order> GetFilteredOrders(OrderFilterDto filter)
+{
+    var query = _context.Set<Order>().AsQueryable();
+
+    if (filter.FromDate.HasValue)
+        query = query.Where(o => o.OrderDate >= filter.FromDate.Value);
+
+    return query;  // No .Include() - relies on lazy loading
+}
+
+// Mapping Profile
+CreateMap<Order, OrderDetailDto>()
+    .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(
+        src => src.Customer.Name))  // AutoMapper triggers lazy loading
+    .ForMember(dest => dest.ShippingAddress, opt => opt.MapFrom(
+        src => src.Customer.Address.Street));  // Nested lazy loading
+```
+
+**✅ AFTER (HyperMapper - explicit eager loading)**
+```csharp
+// Repository
+public IQueryable<Order> GetFilteredOrders(OrderFilterDto filter)
+{
+    // Pre-load ALL navigation properties used in mapping
+    var query = _context.Set<Order>()
+        .Include(o => o.Customer)
+            .ThenInclude(c => c.Address)
+        .Include(o => o.OrderItems)
+            .ThenInclude(item => item.Product)
+        .AsQueryable();
+
+    if (filter.FromDate.HasValue)
+        query = query.Where(o => o.OrderDate >= filter.FromDate.Value);
+
+    return query;
+}
+
+// Mapping Profile (unchanged)
+CreateMap<Order, OrderDetailDto>()
+    .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(
+        src => src.Customer.Name))  // Now works - Customer is pre-loaded
+    .ForMember(dest => dest.ShippingAddress, opt => opt.MapFrom(
+        src => src.Customer.Address.Street));  // Now works - Address is pre-loaded
+```
+
+### Override GetByIdAsync Pattern
+
+If you use a generic repository with `GetByIdAsync`, you may need to override it in specific repositories:
+
+```csharp
+// Base Repository (no navigation properties)
+public class Repository<TEntity> where TEntity : class
+{
+    protected readonly DbContext _context;
+
+    public virtual async Task<TEntity?> GetByIdAsync(int id)
+    {
+        return await _context.Set<TEntity>().FindAsync(id);
+    }
+}
+
+// Specific Repository (with navigation properties)
+public class OrderRepository : Repository<Order>, IOrderRepository
+{
+    public OrderRepository(DbContext context) : base(context) { }
+
+    // Override to add .Include()
+    public override async Task<Order?> GetByIdAsync(int id)
+    {
+        return await _context.Set<Order>()
+            .Include(o => o.Customer)
+            .Include(o => o.OrderItems)
+                .ThenInclude(item => item.Product)
+            .FirstOrDefaultAsync(o => o.Id == id);
+    }
+}
+```
+
+### Testing Strategy
+
+Create tests to verify that `.Include()` statements are working correctly:
+
+**Test Pattern 1: Verify Includes Work**
+```csharp
+[Fact]
+public async Task GetFilteredOrders_LoadsAllNavigationProperties()
+{
+    // Arrange
+    await using var context = CreateInMemoryContext();
+    SeedCompleteData(context);  // Customer → Address → Order → OrderItems
+
+    var repository = new OrderRepository(context);
+
+    // Act
+    var query = repository.GetFilteredOrders(new OrderFilterDto());
+    var result = query.ToList();
+
+    // Assert
+    var first = result.First();
+    Assert.NotNull(first.Customer);  // Verify navigation property loaded
+    Assert.NotNull(first.Customer.Address);  // Verify nested property loaded
+    Assert.NotNull(first.OrderItems);  // Verify collection loaded
+    Assert.NotEmpty(first.OrderItems);  // Verify collection has items
+}
+```
+
+**Test Pattern 2: Negative Test (without Include)**
+```csharp
+[Fact]
+public async Task Order_WithoutInclude_HasNullNavigationProperties()
+{
+    // Arrange
+    var dbName = $"TestDb_{Guid.NewGuid()}";
+    await using var contextForSeeding = CreateInMemoryContextWithName(dbName);
+    SeedCompleteData(contextForSeeding);
+    await contextForSeeding.SaveChangesAsync();
+
+    // Act - Use NEW context for query WITHOUT Include
+    await using var contextForQuerying = CreateInMemoryContextWithName(dbName);
+    var query = contextForQuerying.Set<Order>().AsNoTracking();
+    var result = query.ToList();
+
+    // Assert - Demonstrates lazy loading does NOT work
+    Assert.Null(result.First().Customer);  // NULL because not loaded
+}
+```
+
+**Test Pattern 3: Integration Test with Mapping**
+```csharp
+[Fact]
+public async Task OrderToDto_WithIncludes_MapsAllProperties()
+{
+    // Arrange
+    await using var context = CreateInMemoryContext();
+    SeedCompleteData(context);
+
+    var repository = new OrderRepository(context);
+    var mapper = CreateMapper();
+
+    // Act
+    var query = repository.GetFilteredOrders(new OrderFilterDto());
+    var orders = query.ToList();
+    var dto = mapper.Map<OrderDetailDto>(orders.First());
+
+    // Assert - DTO must have ALL nested data
+    Assert.Equal("John Doe", dto.CustomerName);
+    Assert.Equal("123 Main St", dto.ShippingAddress);
+    Assert.NotEmpty(dto.Items);
+    Assert.Equal("Widget", dto.Items.First().ProductName);
+}
+```
+
+### Best Practices
+
+**✅ DO:**
+1. **Add `.Include()` in repositories**, not in service layers
+2. **Test with InMemory Database** to verify Include statements
+3. **Use `AsNoTracking()`** for read-only queries with Include
+4. **Document navigation dependencies** in code comments
+5. **Override `GetByIdAsync()`** when entity-specific includes are needed
+
+**❌ DON'T:**
+1. **Don't rely on lazy loading** with HyperMapper CodeGen
+2. **Don't add `.Include()` blindly** - only for properties used in mapping
+3. **Don't use explicit `.Load()`** - prefer `.Include()` for performance
+4. **Don't mix lazy and eager loading** - choose one strategy and stick to it
+
+**Performance Tips:**
+```csharp
+// ✅ GOOD: Include only what you need
+.Include(o => o.Customer)
+    .ThenInclude(c => c.Address)
+
+// ❌ BAD: Include unnecessary deep/circular data
+.Include(o => o.Customer)
+    .ThenInclude(c => c.Address)
+        .ThenInclude(a => a.City)           // Not used in mapping
+            .ThenInclude(city => city.Country)  // Circular/unnecessary
+```
+
+### Migration Checklist
+
+When migrating from AutoMapper to HyperMapper with Entity Framework:
+
+- [ ] Identify all repositories that return entities mapped to DTOs
+- [ ] Analyze `MappingProfile` classes for navigation property accesses
+- [ ] Add `.Include()` for all navigation properties referenced in mappings
+- [ ] Create tests with InMemory Database to verify Include statements
+- [ ] Create negative tests to verify lazy loading doesn't work without Include
+- [ ] Run integration tests end-to-end with mapping
+- [ ] Verify all API endpoints return complete data
+
+### Real-World Example
+
+**Scenario**: API endpoint returns DTOs with `null` fields after migrating to HyperMapper
+
+**Entity Relationships:**
+```
+Order → Customer → Address → Country
+     → OrderItems → Product → Category
+```
+
+**Mapping Profile:**
+```csharp
+CreateMap<Order, OrderDetailDto>()
+    .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(
+        src => src.Customer.Name))
+    .ForMember(dest => dest.ShippingCountry, opt => opt.MapFrom(
+        src => src.Customer.Address.Country.Name))
+    .ForMember(dest => dest.Items, opt => opt.MapFrom(
+        src => src.OrderItems));
+```
+
+**Solution Applied:**
+```csharp
+public IQueryable<Order> GetFilteredOrders(OrderFilterDto filter)
+{
+    var query = _context.Set<Order>()
+        // Include all navigation properties used in mapping
+        .Include(o => o.Customer)
+            .ThenInclude(c => c.Address)
+                .ThenInclude(a => a.Country)
+        .Include(o => o.OrderItems)
+            .ThenInclude(item => item.Product)
+                .ThenInclude(p => p.Category)
+        .AsQueryable();
+
+    // Apply filters...
+    if (filter.FromDate.HasValue)
+        query = query.Where(o => o.OrderDate >= filter.FromDate.Value);
+
+    return query;
+}
+```
+
+**Result**: ✅ API endpoint works correctly, all DTOs fully populated
 
 ---
 
