@@ -444,6 +444,22 @@ public class MapperGenerator : IIncrementalGenerator
                             mapping.ConverterTypeName = objectCreation.Type.ToString();
                         }
                     }
+                    // v12.1.0: Support ConvertUsing(typeof(MyConverter))
+                    else if (converterArg?.Expression is TypeOfExpressionSyntax typeOfExpression)
+                    {
+                        // Get full type name from typeof() expression
+                        var typeInfo = semanticModel.GetTypeInfo(typeOfExpression.Type);
+                        if (typeInfo.Type != null)
+                        {
+                            mapping.ConverterTypeName = typeInfo.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                                .Replace("global::", "");
+                        }
+                        else
+                        {
+                            // Fallback to simple name
+                            mapping.ConverterTypeName = typeOfExpression.Type.ToString();
+                        }
+                    }
                 }
                 else if (methodName == "ValidateMemberList")
                 {

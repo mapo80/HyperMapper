@@ -426,21 +426,33 @@ internal class Mapper : IMapper
                     }
                     else
                     {
+                        // v12.1.0: Check for type converter first - it may want to handle null -> null mapping
+                        var converterTypeMap = _registry.FindTypeMap(sourceProp.PropertyType, destProp.PropertyType);
+                        if (converterTypeMap != null && (converterTypeMap.Converter != null || converterTypeMap.ConverterType != null))
+                        {
+                            // Let the converter handle null - it decides what to return
+                            // Pass null as source - the converter should handle it
+                            var convertedValue = ExecuteConverter(null!, sourceProp.PropertyType, destProp.PropertyType, converterTypeMap);
+                            ReflectionCache.SetValue(destProp, destination, convertedValue);
+                        }
                         // Handle null values for dictionaries and collections
-                        var destPropAnalysis = ReflectionCache.GetTypeAnalysis(destProp.PropertyType);
-                        if (destPropAnalysis.IsDictionary)
+                        else
                         {
-                            var emptyDict = CreateEmptyDictionary(destProp.PropertyType, destPropAnalysis.DictionaryKeyType!, destPropAnalysis.DictionaryValueType!);
-                            ReflectionCache.SetValue(destProp, destination, emptyDict);
-                        }
-                        else if (destPropAnalysis.IsCollection)
-                        {
-                            var emptyCollection = CreateEmptyCollection(destProp.PropertyType, destPropAnalysis.CollectionElementType!);
-                            ReflectionCache.SetValue(destProp, destination, emptyCollection);
-                        }
-                        else if (destPropAnalysis.IsNullable || !destProp.PropertyType.IsValueType)
-                        {
-                            ReflectionCache.SetValue(destProp, destination, null);
+                            var destPropAnalysis = ReflectionCache.GetTypeAnalysis(destProp.PropertyType);
+                            if (destPropAnalysis.IsDictionary)
+                            {
+                                var emptyDict = CreateEmptyDictionary(destProp.PropertyType, destPropAnalysis.DictionaryKeyType!, destPropAnalysis.DictionaryValueType!);
+                                ReflectionCache.SetValue(destProp, destination, emptyDict);
+                            }
+                            else if (destPropAnalysis.IsCollection)
+                            {
+                                var emptyCollection = CreateEmptyCollection(destProp.PropertyType, destPropAnalysis.CollectionElementType!);
+                                ReflectionCache.SetValue(destProp, destination, emptyCollection);
+                            }
+                            else if (destPropAnalysis.IsNullable || !destProp.PropertyType.IsValueType)
+                            {
+                                ReflectionCache.SetValue(destProp, destination, null);
+                            }
                         }
                     }
                 }
@@ -1202,23 +1214,35 @@ internal class Mapper : IMapper
                     }
                     else
                     {
-                        // Use cached type analysis for null value handling
-                        var destPropAnalysis = ReflectionCache.GetTypeAnalysis(destProp.PropertyType);
-                        if (destPropAnalysis.IsDictionary)
+                        // v12.1.0: Check for type converter first - it may want to handle null -> null mapping
+                        var converterTypeMap = _registry.FindTypeMap(sourceProp.PropertyType, destProp.PropertyType);
+                        if (converterTypeMap != null && (converterTypeMap.Converter != null || converterTypeMap.ConverterType != null))
                         {
-                            // Null source dictionary -> empty destination dictionary
-                            var emptyDict = CreateEmptyDictionary(destProp.PropertyType, destPropAnalysis.DictionaryKeyType!, destPropAnalysis.DictionaryValueType!);
-                            ReflectionCache.SetValue(destProp, destination, emptyDict);
+                            // Let the converter handle null - it decides what to return
+                            // Pass null as source - the converter should handle it
+                            var convertedValue = ExecuteConverter(null!, sourceProp.PropertyType, destProp.PropertyType, converterTypeMap);
+                            ReflectionCache.SetValue(destProp, destination, convertedValue);
                         }
-                        else if (destPropAnalysis.IsCollection)
+                        else
                         {
-                            // Null source collection -> empty destination collection
-                            var emptyCollection = CreateEmptyCollection(destProp.PropertyType, destPropAnalysis.CollectionElementType!);
-                            ReflectionCache.SetValue(destProp, destination, emptyCollection);
-                        }
-                        else if (destPropAnalysis.IsNullable || !destProp.PropertyType.IsValueType)
-                        {
-                            ReflectionCache.SetValue(destProp, destination, null);
+                            // Use cached type analysis for null value handling
+                            var destPropAnalysis = ReflectionCache.GetTypeAnalysis(destProp.PropertyType);
+                            if (destPropAnalysis.IsDictionary)
+                            {
+                                // Null source dictionary -> empty destination dictionary
+                                var emptyDict = CreateEmptyDictionary(destProp.PropertyType, destPropAnalysis.DictionaryKeyType!, destPropAnalysis.DictionaryValueType!);
+                                ReflectionCache.SetValue(destProp, destination, emptyDict);
+                            }
+                            else if (destPropAnalysis.IsCollection)
+                            {
+                                // Null source collection -> empty destination collection
+                                var emptyCollection = CreateEmptyCollection(destProp.PropertyType, destPropAnalysis.CollectionElementType!);
+                                ReflectionCache.SetValue(destProp, destination, emptyCollection);
+                            }
+                            else if (destPropAnalysis.IsNullable || !destProp.PropertyType.IsValueType)
+                            {
+                                ReflectionCache.SetValue(destProp, destination, null);
+                            }
                         }
                     }
                 }
@@ -1381,19 +1405,30 @@ internal class Mapper : IMapper
                 }
                 else
                 {
-                    // Handle null -> empty collection
-                    var destPropAnalysis = ReflectionCache.GetTypeAnalysis(destProp.PropertyType);
-                    if (destPropAnalysis.IsDictionary)
+                    // v12.1.0: Check for type converter first - it may want to handle null -> null mapping
+                    var converterTypeMap = _registry.FindTypeMap(sourceProp.PropertyType, destProp.PropertyType);
+                    if (converterTypeMap != null && (converterTypeMap.Converter != null || converterTypeMap.ConverterType != null))
                     {
-                        var emptyDict = CreateEmptyDictionary(destProp.PropertyType,
-                            destPropAnalysis.DictionaryKeyType!, destPropAnalysis.DictionaryValueType!);
-                        ReflectionCache.SetValue(destProp, destination, emptyDict);
+                        // Let the converter handle null - it decides what to return
+                        var convertedValue = ExecuteConverter(null!, sourceProp.PropertyType, destProp.PropertyType, converterTypeMap);
+                        ReflectionCache.SetValue(destProp, destination, convertedValue);
                     }
-                    else if (destPropAnalysis.IsCollection)
+                    else
                     {
-                        var emptyCollection = CreateEmptyCollection(destProp.PropertyType,
-                            destPropAnalysis.CollectionElementType!);
-                        ReflectionCache.SetValue(destProp, destination, emptyCollection);
+                        // Handle null -> empty collection
+                        var destPropAnalysis = ReflectionCache.GetTypeAnalysis(destProp.PropertyType);
+                        if (destPropAnalysis.IsDictionary)
+                        {
+                            var emptyDict = CreateEmptyDictionary(destProp.PropertyType,
+                                destPropAnalysis.DictionaryKeyType!, destPropAnalysis.DictionaryValueType!);
+                            ReflectionCache.SetValue(destProp, destination, emptyDict);
+                        }
+                        else if (destPropAnalysis.IsCollection)
+                        {
+                            var emptyCollection = CreateEmptyCollection(destProp.PropertyType,
+                                destPropAnalysis.CollectionElementType!);
+                            ReflectionCache.SetValue(destProp, destination, emptyCollection);
+                        }
                     }
                 }
             }
@@ -1744,6 +1779,16 @@ internal class Mapper : IMapper
         {
             return MapDictionary(value, sourceAnalysis.DictionaryKeyType!, sourceAnalysis.DictionaryValueType!,
                 destAnalysis.DictionaryKeyType!, destAnalysis.DictionaryValueType!);
+        }
+
+        // v12.1.0: Check for type converter before collection handling
+        // This allows converters like string -> IList<T> to work
+        {
+            var typeMap = _registry.FindTypeMap(sourceType, destType);
+            if (typeMap != null && (typeMap.Converter != null || typeMap.ConverterType != null))
+            {
+                return ExecuteConverter(value, sourceType, destType, typeMap);
+            }
         }
 
         // Handle collection mappings
