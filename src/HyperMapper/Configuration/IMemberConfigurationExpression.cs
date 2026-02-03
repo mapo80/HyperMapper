@@ -61,4 +61,13 @@ public interface IMemberConfigurationExpression<TSource, TDestination, TMember>
     /// AutoMapper API compatible.
     /// </summary>
     void MapFrom(IValueResolver<TSource, TDestination, TMember> resolver);
+
+    /// <summary>
+    /// Supply a custom mapping order instead of what the .NET runtime returns.
+    /// Properties without explicit order map first, then ordered properties execute
+    /// from lowest to highest value. Useful when property setters have side effects.
+    /// AutoMapper API compatible.
+    /// </summary>
+    /// <param name="mappingOrder">Mapping order value (null/no order maps first, then ascending)</param>
+    void SetMappingOrder(int mappingOrder);
 }

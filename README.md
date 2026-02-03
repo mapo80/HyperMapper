@@ -489,6 +489,7 @@ find . -name "*.cs" -exec sed -i '' 's/using AutoMapper;/using HyperMapper;/g' {
 - Reference preservation with `PreserveReferences()`
 - Depth limiting with `MaxDepth()`
 - Assembly scanning with `AddMaps()`
+- Mapping order control with `SetMappingOrder()` (v12.1.0)
 
 **⚠️ Behavioral Differences:**
 - **Performance**: HyperMapper is 1.2-5.3x faster
@@ -1830,6 +1831,131 @@ CreateMap<Source, Dest>()
     .ForMember(d => d.InnerName, opt => opt.MapFrom(s =>
         s.Inner == null ? "N/A" : s.Inner.Name));
 ```
+
+### Mapping Order Control (v12.1.0)
+
+Control the sequence in which properties are mapped using `SetMappingOrder()`. This is essential when destination property setters have side effects or dependencies on other properties.
+
+#### When to Use SetMappingOrder
+
+Use `SetMappingOrder()` when:
+- **Dependent property setters**: One property's setter modifies another property
+- **Initialization sequences**: Properties must be set in a specific order for validation
+- **Side-effect management**: Control execution order when setters have observable effects
+
+#### Execution Order Rules
+
+1. **Properties without `SetMappingOrder` execute first** (default behavior)
+2. **Properties with explicit order execute in ascending order** (-500 before 0 before 600)
+3. **Properties with the same order value maintain `ForMember()` definition sequence**
+
+#### Example 1: Dependent Property Setters
+
+The primary use case is when a destination property setter has a side effect that modifies another property:
+
+```csharp
+public class Destination
+{
+    private string one;
+    public string One
+    {
+        get => one;
+        set
+        {
+            one = value;
+            Two = value; // Side effect: also sets Two
+        }
+    }
+    public string Two { get; set; }
+}
+
+// Configure mapping order to preserve independent values
+CreateMap<Source, Destination>()
+    .ForMember(d => d.One, opt =>
+    {
+        opt.MapFrom(s => s.First);
+        opt.SetMappingOrder(-500); // Execute first
+    })
+    .ForMember(d => d.Two, opt =>
+    {
+        opt.MapFrom(s => s.Second);
+        opt.SetMappingOrder(600); // Execute after One, preserving independent value
+    });
+
+var result = mapper.Map<Destination>(source);
+// result.One = "first"
+// result.Two = "second" (not overwritten by One's setter)
+```
+
+**Without `SetMappingOrder`**, the mapping order is undefined, and `One`'s setter might overwrite `Two`'s value.
+
+#### Example 2: Property Accumulation
+
+When a property accumulates or concatenates values:
+
+```csharp
+public class AccumulatingDestination
+{
+    private string id = "";
+    public string ID
+    {
+        get => id;
+        set => id = string.Concat(ID, value); // Accumulates values
+    }
+}
+
+CreateMap<Source, AccumulatingDestination>()
+    .ForMember(d => d.ID, opt =>
+    {
+        opt.MapFrom(s => s.ClientID);
+        opt.SetMappingOrder(-1000); // Map first to establish base value
+    });
+```
+
+#### Example 3: Mixed Ordering
+
+Combining null order, negative values, and positive values:
+
+```csharp
+CreateMap<Source, Destination>()
+    .ForMember(d => d.Priority, opt =>
+    {
+        opt.MapFrom(s => s.PriorityValue);
+        // No SetMappingOrder - maps first (null order)
+    })
+    .ForMember(d => d.Name, opt =>
+    {
+        opt.MapFrom(s => s.FullName);
+        opt.SetMappingOrder(-50); // Maps second
+    })
+    .ForMember(d => d.Description, opt =>
+    {
+        opt.MapFrom(s => s.Desc);
+        opt.SetMappingOrder(0); // Maps third
+    })
+    .ForMember(d => d.Status, opt =>
+    {
+        opt.MapFrom(s => s.CurrentStatus);
+        opt.SetMappingOrder(100); // Maps last
+    });
+
+// Execution order: Priority (null) → Name (-50) → Description (0) → Status (100)
+```
+
+#### Compatibility with Other Features
+
+`SetMappingOrder` works seamlessly with:
+- **Conditions**: Order is respected, conditions are still evaluated
+- **PreConditions**: Member positioned in sequence according to order
+- **Destination-dependent mappings**: `MapFrom((src, dest) => ...)` respects order
+- **Execution plans**: Order preserved in compiled expression trees
+
+#### AutoMapper Compatibility
+
+HyperMapper's `SetMappingOrder` is 100% compatible with AutoMapper:
+- Same API signature: `void SetMappingOrder(int mappingOrder)`
+- Same execution order rules (null order first, then ascending)
+- Same behavior with inheritance and other features
 
 ---
 

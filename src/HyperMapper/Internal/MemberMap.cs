@@ -82,6 +82,13 @@ internal class MemberMap
     /// </summary>
     public bool HasValueResolver => ResolverType != null;
 
+    /// <summary>
+    /// v12.1.0: Mapping order value for controlling property mapping sequence.
+    /// Null means no explicit order (maps first), then properties are sorted by ascending order value.
+    /// Lower numbers execute before higher numbers.
+    /// </summary>
+    public int? MappingOrder { get; set; }
+
     public MemberMap(string destinationMemberName)
     {
         DestinationMemberName = destinationMemberName;

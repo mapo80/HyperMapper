@@ -143,7 +143,25 @@ internal class TypeMap
         // v8.0.0: Expand ForAllMembers and ForAllOtherMembers into actual MemberMaps
         ExpandBulkMemberConfigurations();
 
+        // v12.1.0: Sort member maps by mapping order
+        SortMemberMaps();
+
         EnsureMemberSetsComputed();
+    }
+
+    /// <summary>
+    /// v12.1.0: Sorts member maps by mapping order.
+    /// Properties without explicit order (null) map first, then ordered properties execute
+    /// from lowest to highest value. This is AutoMapper-compatible behavior.
+    /// </summary>
+    private void SortMemberMaps()
+    {
+        // AutoMapper-compatible sorting:
+        // 1. Null order first (null < any integer in Comparer<int?>)
+        // 2. Then by ascending order value
+        // 3. For ties, maintain insertion order (List.Sort is stable in .NET Core 3.0+)
+        _memberMaps.Sort((left, right) =>
+            Comparer<int?>.Default.Compare(left.MappingOrder, right.MappingOrder));
     }
 
     /// <summary>

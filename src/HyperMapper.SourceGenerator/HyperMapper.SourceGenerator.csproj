@@ -12,7 +12,7 @@
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <PackageId>HyperMapper.CodeGen</PackageId>
-    <PackageVersion>12.1.2</PackageVersion>
+    <PackageVersion>12.2.0</PackageVersion>
     <Description>Source Generator for HyperMapper - compile-time mapping code generation for maximum performance</Description>
     <Authors>HyperMapper Contributors</Authors>
     <PackageTags>mapper;automapper;sourcegenerator;codegen;roslyn;aot;hypermapper</PackageTags>

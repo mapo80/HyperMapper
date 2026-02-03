@@ -84,6 +84,9 @@ internal class MemberConfigurationExpression<TSource, TDestination, TMember>
     private Type? _resolverType;
     private object? _resolverInstance;
 
+    // v12.1.0: Mapping order support
+    private int? _mappingOrder;
+
     public void NullSubstitute(TMember substituteValue)
     {
         _nullSubstitute = substituteValue;
@@ -115,6 +118,11 @@ internal class MemberConfigurationExpression<TSource, TDestination, TMember>
         _destinationResolver = null;
     }
 
+    public void SetMappingOrder(int mappingOrder)
+    {
+        _mappingOrder = mappingOrder;
+    }
+
     internal MemberMap ToMemberMap()
     {
         return new MemberMap(_memberName)
@@ -137,7 +145,9 @@ internal class MemberConfigurationExpression<TSource, TDestination, TMember>
             DestinationResolver = _destinationResolver,
             // v12.0.0: Pass IValueResolver configuration
             ResolverType = _resolverType,
-            ResolverInstance = _resolverInstance
+            ResolverInstance = _resolverInstance,
+            // v12.1.0: Pass mapping order configuration
+            MappingOrder = _mappingOrder
         };
     }
 }
